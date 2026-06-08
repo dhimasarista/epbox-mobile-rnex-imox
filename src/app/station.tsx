@@ -1,7 +1,7 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const BG_COLOR = '#F6F5F2';
@@ -10,9 +10,71 @@ const ORANGE = '#FF6B35';
 const GREEN = '#10B981';
 const DARK = '#1A1C1A';
 
+const INITIAL_FORM = {
+  vesselName: 'MV Sentinel Aurora',
+  roomName: 'Fire Pump Room',
+  pumpTag: 'FFP-01',
+  pumpType: 'Main Fire Pump',
+  roomTemperature: '28 C',
+  roomHumidity: '68 %',
+  suctionPressure: '2.4 bar',
+  dischargePressure: '8.7 bar',
+  seaWaterLinePressure: '2.1 bar',
+  batteryVoltage: '24.8 VDC',
+  fuelLevel: '83 %',
+  ventilationStatus: 'Normal air flow',
+  leakObservation: 'No visible leakage',
+  alarmCondition: 'No active alarm',
+  remarks: 'Demo values only. These inputs are not connected to the actual pump or live vessel instrumentation.',
+};
+
+type FormKey = keyof typeof INITIAL_FORM;
+
+const FIELD_GROUPS: {
+  title: string;
+  fields: { key: FormKey; label: string; placeholder: string }[];
+}[] = [
+  {
+    title: 'Location Details',
+    fields: [
+      { key: 'vesselName', label: 'Vessel Name', placeholder: 'Enter vessel name' },
+      { key: 'roomName', label: 'Room Name', placeholder: 'Enter room name' },
+      { key: 'pumpTag', label: 'Pump Tag', placeholder: 'Enter pump tag' },
+      { key: 'pumpType', label: 'Pump Type', placeholder: 'Enter pump type' },
+    ],
+  },
+  {
+    title: 'Environmental Conditions',
+    fields: [
+      { key: 'roomTemperature', label: 'Room Temperature', placeholder: 'Example: 28 C' },
+      { key: 'roomHumidity', label: 'Room Humidity', placeholder: 'Example: 68 %' },
+      { key: 'ventilationStatus', label: 'Ventilation Status', placeholder: 'Describe ventilation condition' },
+      { key: 'alarmCondition', label: 'Alarm Condition', placeholder: 'Describe active alarms' },
+    ],
+  },
+  {
+    title: 'Pump Operating References',
+    fields: [
+      { key: 'suctionPressure', label: 'Suction Pressure', placeholder: 'Example: 2.4 bar' },
+      { key: 'dischargePressure', label: 'Discharge Pressure', placeholder: 'Example: 8.7 bar' },
+      { key: 'seaWaterLinePressure', label: 'Sea Water Line Pressure', placeholder: 'Example: 2.1 bar' },
+      { key: 'batteryVoltage', label: 'Battery Voltage', placeholder: 'Example: 24.8 VDC' },
+      { key: 'fuelLevel', label: 'Fuel Level', placeholder: 'Example: 83 %' },
+      { key: 'leakObservation', label: 'Leak Observation', placeholder: 'Describe any leakage' },
+    ],
+  },
+];
+
 export default function StationDetailScreen() {
   const router = useRouter();
-  const [selectedPort, setSelectedPort] = useState('typeA');
+  const [form, setForm] = useState(INITIAL_FORM);
+
+  const updateField = (key: FormKey, value: string) => {
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -20,90 +82,92 @@ export default function StationDetailScreen() {
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Feather name="arrow-left" size={24} color={DARK} />
         </TouchableOpacity>
-        <Text style={styles.headerLabel}>Albuquerque, NM 87102</Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerLabel}>Pump Room Demo Form</Text>
+        <View style={styles.headerGhost} />
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.detailCard}>
-          <TouchableOpacity style={styles.directionBtn}>
-            <Text style={styles.directionBtnText}>Get Direction</Text>
-          </TouchableOpacity>
-
-          <View style={styles.titleRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title}>Green Pedal Charging{"\n"}Hub Station</Text>
-              <View style={styles.ratingRow}>
-                <Feather name="star" size={16} color="#FBBF24" />
-                <Text style={styles.ratingText}>4.9</Text>
-                <Text style={styles.reviewsText}>(59 Reviews)</Text>
-              </View>
+        <View style={styles.heroCard}>
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroBadge}>
+              <MaterialCommunityIcons name="fire-hydrant" size={14} color={ORANGE} />
+              <Text style={styles.heroBadgeText}>Demo Only</Text>
             </View>
-            <View style={styles.priceContainer}>
-              <View style={styles.iconWrapper}>
-                <Feather name="dollar-sign" size={16} color={ORANGE} />
-              </View>
-              <Text style={styles.priceText}>$10.10</Text>
-              <Text style={styles.perKwhText}>Per kWh</Text>
+            <View style={styles.liveChip}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveChipText}>Static Example</Text>
             </View>
           </View>
 
-          <View style={styles.portSectionHeader}>
-            <Text style={styles.sectionTitle}>Charging Connector Ports</Text>
-            <View style={styles.statusDots}>
-              <View style={styles.activeDot} />
-              <View style={styles.inactiveDot} />
-            </View>
-          </View>
-
-          <View style={styles.portsRow}>
-            {/* Type A */}
-            <TouchableOpacity 
-              style={[styles.portCard, selectedPort === 'typeA' && styles.portCardSelected]}
-              onPress={() => setSelectedPort('typeA')}
-            >
-              <View style={[styles.availabilityBadge, { backgroundColor: '#D1FAE5' }]}>
-                <MaterialCommunityIcons name="power-plug" size={12} color={GREEN} />
-                <Text style={[styles.availabilityText, { color: GREEN }]}>Available</Text>
-              </View>
-              <View style={styles.portImageWrapper}>
-                {/* Placeholder plug icon */}
-                <MaterialCommunityIcons name="power-socket-eu" size={60} color={DARK} />
-              </View>
-              <Text style={styles.portCode}>IEC 60320 C13</Text>
-              <Text style={styles.portType}>Type A</Text>
-              <View style={styles.powerRow}>
-                <Feather name="zap" size={12} color={DARK} />
-                <Text style={styles.powerText}>1.5 kW</Text>
-              </View>
-            </TouchableOpacity>
-
-            {/* Type C */}
-            <TouchableOpacity 
-              style={[styles.portCard, selectedPort === 'typeC' && styles.portCardSelected]}
-              onPress={() => setSelectedPort('typeC')}
-            >
-              <View style={[styles.availabilityBadge, { backgroundColor: '#DBEAFE' }]}>
-                <MaterialCommunityIcons name="power-plug" size={12} color="#3B82F6" />
-                <Text style={[styles.availabilityText, { color: '#3B82F6' }]}>In Use</Text>
-              </View>
-              <View style={styles.portImageWrapper}>
-                {/* Placeholder plug icon */}
-                <MaterialCommunityIcons name="power-plug-outline" size={60} color={DARK} />
-              </View>
-              <Text style={styles.portCode}>SAE J1772</Text>
-              <Text style={styles.portType}>Type C</Text>
-              <View style={styles.powerRow}>
-                <Feather name="zap" size={12} color={DARK} />
-                <Text style={styles.powerText}>3.3 kW</Text>
-              </View>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity style={styles.startBtn}>
-            <Text style={styles.startBtnText}>Start Charging</Text>
-          </TouchableOpacity>
+          <Text style={styles.heroTitle}>Fire Fighting Pump Room Inspection</Text>
+          <Text style={styles.heroSubtitle}>
+            This mobile page is intended for demonstration only. All values below are fake reference
+            inputs and are not connected to an actual vessel pump, PLC, or sensor source.
+          </Text>
         </View>
+
+        {FIELD_GROUPS.map((group) => (
+          <View key={group.title} style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>{group.title}</Text>
+
+            {group.fields.map((field) => (
+              <View key={field.key} style={styles.fieldBlock}>
+                <Text style={styles.fieldLabel}>{field.label}</Text>
+                <TextInput
+                  value={form[field.key]}
+                  onChangeText={(value) => updateField(field.key, value)}
+                  placeholder={field.placeholder}
+                  placeholderTextColor="#9AA09A"
+                  style={styles.input}
+                />
+              </View>
+            ))}
+          </View>
+        ))}
+
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Inspector Remarks</Text>
+          <View style={styles.fieldBlock}>
+            <Text style={styles.fieldLabel}>Remarks</Text>
+            <TextInput
+              value={form.remarks}
+              onChangeText={(value) => updateField('remarks', value)}
+              placeholder="Add remarks for the demo report"
+              placeholderTextColor="#9AA09A"
+              style={[styles.input, styles.remarksInput]}
+              multiline
+              textAlignVertical="top"
+            />
+          </View>
+        </View>
+
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>Suggested Demo Parameters</Text>
+          <View style={styles.summaryGrid}>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Temperature</Text>
+              <Text style={styles.summaryValue}>{form.roomTemperature}</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Humidity</Text>
+              <Text style={styles.summaryValue}>{form.roomHumidity}</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Suction</Text>
+              <Text style={styles.summaryValue}>{form.suctionPressure}</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryLabel}>Discharge</Text>
+              <Text style={styles.summaryValue}>{form.dischargePressure}</Text>
+            </View>
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.primaryButton}>
+          <Text style={styles.primaryButtonText}>Save Demo Report</Text>
+        </TouchableOpacity>
+
+        <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -131,174 +195,151 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#666',
+    fontSize: 17,
+    fontWeight: '700',
+    color: DARK,
+  },
+  headerGhost: {
+    width: 40,
+    height: 40,
   },
   scrollContent: {
     padding: 20,
+    paddingBottom: 36,
+    gap: 16,
   },
-  detailCard: {
-    backgroundColor: CARD_BG,
+  heroCard: {
+    backgroundColor: DARK,
     borderRadius: 30,
     padding: 20,
-    paddingTop: 24,
   },
-  directionBtn: {
-    backgroundColor: ORANGE,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginBottom: 24,
-  },
-  directionBtnText: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  titleRow: {
+  heroTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 30,
+    alignItems: 'center',
+    marginBottom: 18,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: DARK,
-    lineHeight: 30,
-    marginBottom: 12,
-  },
-  ratingRow: {
+  heroBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-  },
-  ratingText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: DARK,
-  },
-  reviewsText: {
-    fontSize: 14,
-    color: '#666',
-  },
-  priceContainer: {
-    alignItems: 'center',
-  },
-  iconWrapper: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
     backgroundColor: '#FEF0EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  priceText: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: DARK,
-  },
-  perKwhText: {
-    fontSize: 12,
-    color: '#666',
-    fontWeight: '500',
-  },
-  portSectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: DARK,
-  },
-  statusDots: {
-    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
     gap: 6,
   },
-  activeDot: {
+  heroBadgeText: {
+    color: ORANGE,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  liveChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  liveDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: GREEN,
   },
-  inactiveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#E0E0E0',
+  liveChipText: {
+    color: '#D5D9D5',
+    fontSize: 12,
+    fontWeight: '600',
   },
-  portsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 32,
+  heroTitle: {
+    color: '#FFF',
+    fontSize: 24,
+    fontWeight: '800',
+    lineHeight: 31,
+    marginBottom: 10,
   },
-  portCard: {
-    flex: 1,
-    backgroundColor: BG_COLOR,
-    borderRadius: 24,
-    padding: 12,
-    borderWidth: 2,
-    borderColor: 'transparent',
+  heroSubtitle: {
+    color: '#CDD2CD',
+    fontSize: 14,
+    lineHeight: 21,
   },
-  portCardSelected: {
-    borderColor: ORANGE,
+  sectionCard: {
+    backgroundColor: CARD_BG,
+    borderRadius: 28,
+    padding: 18,
   },
-  availabilityBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: DARK,
+    marginBottom: 14,
+  },
+  fieldBlock: {
+    marginBottom: 14,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#5E645E',
     marginBottom: 8,
   },
-  availabilityText: {
-    fontSize: 10,
-    fontWeight: '700',
+  input: {
+    backgroundColor: BG_COLOR,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: DARK,
+    borderWidth: 1,
+    borderColor: '#E4E8E4',
   },
-  portImageWrapper: {
-    height: 80,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
+  remarksInput: {
+    minHeight: 110,
   },
-  portCode: {
-    fontSize: 11,
-    color: '#666',
-    marginBottom: 4,
+  summaryCard: {
+    backgroundColor: '#EDF8F2',
+    borderRadius: 28,
+    padding: 18,
   },
-  portType: {
-    fontSize: 16,
+  summaryTitle: {
+    fontSize: 17,
     fontWeight: '700',
     color: DARK,
+    marginBottom: 14,
+  },
+  summaryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  summaryItem: {
+    width: '47%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 14,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#5E645E',
     marginBottom: 6,
   },
-  powerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  powerText: {
-    fontSize: 12,
+  summaryValue: {
+    fontSize: 18,
+    fontWeight: '800',
     color: DARK,
-    fontWeight: '500',
   },
-  startBtn: {
-    backgroundColor: DARK,
+  primaryButton: {
+    backgroundColor: ORANGE,
     borderRadius: 30,
     paddingVertical: 18,
     alignItems: 'center',
   },
-  startBtnText: {
+  primaryButtonText: {
     color: '#FFF',
     fontSize: 16,
-    fontWeight: '600',
-  }
+    fontWeight: '700',
+  },
+  bottomSpacer: {
+    height: 96,
+  },
 });

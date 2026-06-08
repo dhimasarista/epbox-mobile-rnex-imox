@@ -1,11 +1,11 @@
-import { Tabs } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import {
+  LucidCable,
   LucideActivity,
   LucideHome,
   LucideSettings,
-  LucideSlidersHorizontal,
 } from '@/components/lucide-tab-icons';
 
 const DARK = '#1A1C1A';
@@ -15,17 +15,30 @@ const ACTIVE_BG = '#333533';
 
 const TAB_CONFIG = {
   index: LucideHome,
-  explore: LucideSlidersHorizontal,
+  explore: LucidCable,
   status: LucideActivity,
   settings: LucideSettings,
 } as const;
 
+const TAB_PATHS = {
+  index: '/',
+  explore: '/explore',
+  status: '/status',
+  settings: '/settings',
+} as const;
+
 function CustomTabBar({ state, descriptors, navigation }: any) {
+  const router = useRouter();
+  const visibleRoutes = state.routes.filter(
+    (route: any) => route.name in TAB_CONFIG
+  );
+
   return (
     <View style={styles.tabBarContainer}>
       <View style={styles.tabBar}>
-        {state.routes.map((route: any, index: number) => {
-          const isFocused = state.index === index;
+        {visibleRoutes.map((route: any) => {
+          const originalIndex = state.routes.findIndex((item: any) => item.key === route.key);
+          const isFocused = state.index === originalIndex;
           const Icon = TAB_CONFIG[route.name as keyof typeof TAB_CONFIG];
 
           if (!Icon) {
@@ -40,7 +53,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
             });
 
             if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name);
+              router.navigate(TAB_PATHS[route.name as keyof typeof TAB_PATHS]);
             }
           };
 
@@ -81,7 +94,7 @@ export default function AppTabs() {
         headerShown: false,
       }}>
       <Tabs.Screen name="index" options={{ title: 'Home' }} />
-      <Tabs.Screen name="explore" options={{ title: 'Room Control' }} />
+      <Tabs.Screen name="explore" options={{ title: 'Explore' }} />
       <Tabs.Screen name="status" options={{ title: 'Status' }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
       <Tabs.Screen name="station" options={{ href: null }} />

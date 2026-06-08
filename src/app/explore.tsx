@@ -1,104 +1,131 @@
-import React from 'react';
-import { View, StyleSheet, Text, ScrollView, TextInput, TouchableOpacity } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
-import { Image } from 'expo-image';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const BG_COLOR = '#F6F5F2';
 const CARD_BG = '#FFFFFF';
+const ORANGE = '#FF6B35';
+const GREEN = '#10B981';
 const DARK = '#1A1C1A';
 
-export default function StationScreen() {
+const ROOMS = [
+  {
+    id: 'pump-room',
+    title: 'Fire Pump Room',
+    vessel: 'MV Sentinel Aurora',
+    deck: 'Lower Deck',
+    status: 'Ready for demo input',
+    metric: '28 C',
+    metricLabel: 'Room Temp',
+    icon: 'fire-hydrant',
+  },
+  {
+    id: 'foam-station',
+    title: 'Foam Pump Station',
+    vessel: 'MV Sentinel Aurora',
+    deck: 'Safety Deck',
+    status: 'Manual review pending',
+    metric: '2.9 bar',
+    metricLabel: 'Line Pressure',
+    icon: 'fire-circle',
+  },
+  {
+    id: 'sprinkler-room',
+    title: 'Sprinkler Valve Room',
+    vessel: 'MV Sentinel Aurora',
+    deck: 'Main Deck',
+    status: 'Normal standby',
+    metric: '67 %',
+    metricLabel: 'Humidity',
+    icon: 'valve',
+  },
+] as const;
+
+export default function ExploreScreen() {
   const router = useRouter();
-  
-  const stations = [
-    {
-      id: '1',
-      name: 'Blue Volt Charging Hub Station',
-      address: '123 Main St, Albuquerque, NM 87102',
-      rating: '4.9',
-      reviews: '59',
-      distance: '1.3 Km',
-      image: 'https://images.unsplash.com/photo-1571188654248-7a89213915f7?auto=format&fit=crop&q=80&w=300',
-    },
-    {
-      id: '2',
-      name: 'Pedal Boost Power Hub Station',
-      address: '456 Elm St, Santa Fe, NM 87501',
-      rating: '4.5',
-      reviews: '42',
-      distance: '0.9 Km',
-      image: 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7?auto=format&fit=crop&q=80&w=300',
-    },
-    {
-      id: '3',
-      name: 'Cycle Charge Oasis',
-      address: '789 Oak St, Roswell, NM 88201',
-      rating: '4.8',
-      reviews: '128',
-      distance: '2.5 Km',
-      image: 'https://images.unsplash.com/photo-1563283253-abdfa49db23c?auto=format&fit=crop&q=80&w=300',
-    }
-  ];
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      {/* Search Header */}
-      <View style={styles.header}>
-        <View style={styles.searchBar}>
-          <Feather name="search" size={20} color="#777" />
-          <TextInput 
-            placeholder="Search station" 
-            style={styles.searchInput}
-            placeholderTextColor="#999"
-          />
-          <TouchableOpacity>
-            <Feather name="sliders" size={20} color="#777" />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.toggleGroup}>
-          <TouchableOpacity style={[styles.toggleBtn, styles.toggleBtnActive]}>
-            <Feather name="map" size={18} color={DARK} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.toggleBtn}>
-            <Feather name="list" size={18} color="#FFF" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {stations.map((station) => (
-          <TouchableOpacity 
-            key={station.id} 
-            style={styles.stationCard}
-            onPress={() => router.push('/station')}
-          >
-            <View style={styles.cardLayout}>
-              <View style={styles.imageContainer}>
-                <Image source={{ uri: station.image }} style={styles.stationImage} />
-                <View style={styles.distanceBadge}>
-                  <Feather name="map-pin" size={10} color="#FFF" />
-                  <Text style={styles.distanceText}>{station.distance}</Text>
-                </View>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.pageTitle}>Explore</Text>
+            <Text style={styles.pageSubtitle}>oke gas</Text>
+          </View>
+          <View style={styles.headerBadge}>
+            <Feather name="sliders" size={18} color={DARK} />
+          </View>
+        </View>
+
+        <View style={styles.searchBar}>
+          <Feather name="search" size={18} color="#7B7F7B" />
+          <TextInput
+            placeholder="Search room, deck, or vessel"
+            placeholderTextColor="#9AA09A"
+            style={styles.searchInput}
+          />
+        </View>
+
+        <View style={styles.heroCard}>
+          <View style={styles.heroBadge}>
+            <MaterialCommunityIcons name="shield-check-outline" size={16} color={GREEN} />
+            <Text style={styles.heroBadgeText}>Fire Safety Demo</Text>
+          </View>
+          <Text style={styles.heroTitle}>Room Selection</Text>
+          <Text style={styles.heroText}>
+            Use this page to open a room profile, then enter fake operational values for presentation,
+            training, or UI demonstration.
+          </Text>
+        </View>
+
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Active Rooms</Text>
+            <Text style={styles.summaryValue}>03</Text>
+          </View>
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>Demo Source</Text>
+            <Text style={styles.summaryValue}>Manual</Text>
+          </View>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Monitored Spaces</Text>
+          <Text style={styles.sectionAction}>View all</Text>
+        </View>
+
+        {ROOMS.map((room) => (
+          <TouchableOpacity
+            key={room.id}
+            style={styles.roomCard}
+            onPress={() => router.push('/station')}>
+            <View style={styles.roomTopRow}>
+              <View style={styles.roomIconWrap}>
+                <MaterialCommunityIcons name={room.icon as any} size={20} color={ORANGE} />
               </View>
-              <View style={styles.detailsContainer}>
-                <Text style={styles.stationName} numberOfLines={2}>{station.name}</Text>
-                <Text style={styles.stationAddress} numberOfLines={2}>{station.address}</Text>
-                <View style={styles.ratingRow}>
-                  <Feather name="star" size={14} color="#FBBF24" style={styles.starFilled} />
-                  <Text style={styles.ratingText}>{station.rating}</Text>
-                  <Text style={styles.reviewsText}>({station.reviews} Reviews)</Text>
-                  
-                  <TouchableOpacity style={styles.heartBtn}>
-                    <Feather name="heart" size={16} color="#777" />
-                  </TouchableOpacity>
-                </View>
+              <View style={styles.metricChip}>
+                <Text style={styles.metricValue}>{room.metric}</Text>
+                <Text style={styles.metricLabel}>{room.metricLabel}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.roomTitle}>{room.title}</Text>
+            <Text style={styles.roomSubtitle}>{room.vessel}</Text>
+
+            <View style={styles.metaRow}>
+              <View style={styles.metaItem}>
+                <Feather name="map-pin" size={13} color="#6B706B" />
+                <Text style={styles.metaText}>{room.deck}</Text>
+              </View>
+              <View style={styles.metaItem}>
+                <View style={styles.statusDot} />
+                <Text style={styles.metaText}>{room.status}</Text>
               </View>
             </View>
           </TouchableOpacity>
         ))}
-        {/* Spacer for custom bottom tab */}
+
         <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
@@ -110,126 +137,188 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: BG_COLOR,
   },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 36,
+  },
   header: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 18,
+  },
+  pageTitle: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: DARK,
+    marginBottom: 4,
+  },
+  pageSubtitle: {
+    fontSize: 14,
+    color: '#6B706B',
+  },
+  headerBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: CARD_BG,
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 20,
-    gap: 12,
   },
   searchBar: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: CARD_BG,
-    borderRadius: 30,
+    borderRadius: 24,
     paddingHorizontal: 16,
-    height: 50,
+    height: 52,
     gap: 10,
+    marginBottom: 16,
   },
   searchInput: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 15,
     color: DARK,
   },
-  toggleGroup: {
-    flexDirection: 'row',
+  heroCard: {
     backgroundColor: DARK,
-    borderRadius: 30,
-    padding: 4,
-    height: 50,
-    alignItems: 'center',
-  },
-  toggleBtn: {
-    width: 44,
-    height: 42,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  toggleBtnActive: {
-    backgroundColor: CARD_BG,
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-  },
-  stationCard: {
-    backgroundColor: CARD_BG,
-    borderRadius: 24,
-    padding: 12,
+    borderRadius: 28,
+    padding: 20,
     marginBottom: 16,
   },
-  cardLayout: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  imageContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  stationImage: {
-    width: '100%',
-    height: '100%',
-  },
-  distanceBadge: {
-    position: 'absolute',
-    bottom: 8,
-    alignSelf: 'center',
+  heroBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: '#EDF8F2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    gap: 6,
+    marginBottom: 14,
   },
-  distanceText: {
+  heroBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: GREEN,
+  },
+  heroTitle: {
+    fontSize: 24,
+    fontWeight: '800',
     color: '#FFF',
-    fontSize: 10,
+    marginBottom: 8,
+  },
+  heroText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#D4D7D4',
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 18,
+  },
+  summaryCard: {
+    flex: 1,
+    backgroundColor: CARD_BG,
+    borderRadius: 24,
+    padding: 16,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B706B',
+    marginBottom: 8,
+  },
+  summaryValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: DARK,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: DARK,
+  },
+  sectionAction: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: ORANGE,
+  },
+  roomCard: {
+    backgroundColor: CARD_BG,
+    borderRadius: 26,
+    padding: 18,
+    marginBottom: 14,
+  },
+  roomTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  roomIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FEF0EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  metricChip: {
+    alignItems: 'flex-end',
+  },
+  metricValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: DARK,
+  },
+  metricLabel: {
+    fontSize: 12,
+    color: '#6B706B',
     fontWeight: '600',
   },
-  detailsContainer: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  stationName: {
-    color: DARK,
-    fontSize: 16,
+  roomTitle: {
+    fontSize: 18,
     fontWeight: '700',
-    lineHeight: 22,
+    color: DARK,
     marginBottom: 4,
   },
-  stationAddress: {
-    fontSize: 13,
-    color: '#666',
-    lineHeight: 18,
-    marginBottom: 10,
+  roomSubtitle: {
+    fontSize: 14,
+    color: '#6B706B',
+    marginBottom: 14,
   },
-  ratingRow: {
+  metaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  metaItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
-  starFilled: {
-    color: '#FBBF24',
+  metaText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B706B',
   },
-  ratingText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: DARK,
-  },
-  reviewsText: {
-    fontSize: 13,
-    color: '#666',
-  },
-  heartBtn: {
-    marginLeft: 'auto',
-    padding: 4,
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: GREEN,
   },
   bottomSpacer: {
     height: 100,
-  }
+  },
 });
