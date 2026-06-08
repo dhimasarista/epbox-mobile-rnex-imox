@@ -1,180 +1,235 @@
+import React from 'react';
+import { View, StyleSheet, Text, ScrollView, TextInput, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { SymbolView } from 'expo-symbols';
-import { Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
-import { ExternalLink } from '@/components/external-link';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Collapsible } from '@/components/ui/collapsible';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
+const BG_COLOR = '#F6F5F2';
+const CARD_BG = '#FFFFFF';
+const DARK = '#1A1C1A';
 
-export default function TabTwoScreen() {
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three,
-  };
-  const theme = useTheme();
-
-  const contentPlatformStyle = Platform.select({
-    android: {
-      paddingTop: insets.top,
-      paddingLeft: insets.left,
-      paddingRight: insets.right,
-      paddingBottom: insets.bottom,
+export default function StationScreen() {
+  const router = useRouter();
+  
+  const stations = [
+    {
+      id: '1',
+      name: 'Blue Volt Charging Hub Station',
+      address: '123 Main St, Albuquerque, NM 87102',
+      rating: '4.9',
+      reviews: '59',
+      distance: '1.3 Km',
+      image: 'https://images.unsplash.com/photo-1571188654248-7a89213915f7?auto=format&fit=crop&q=80&w=300',
     },
-    web: {
-      paddingTop: Spacing.six,
-      paddingBottom: Spacing.four,
+    {
+      id: '2',
+      name: 'Pedal Boost Power Hub Station',
+      address: '456 Elm St, Santa Fe, NM 87501',
+      rating: '4.5',
+      reviews: '42',
+      distance: '0.9 Km',
+      image: 'https://images.unsplash.com/photo-1593941707882-a5bba14938c7?auto=format&fit=crop&q=80&w=300',
     },
-  });
+    {
+      id: '3',
+      name: 'Cycle Charge Oasis',
+      address: '789 Oak St, Roswell, NM 88201',
+      rating: '4.8',
+      reviews: '128',
+      distance: '2.5 Km',
+      image: 'https://images.unsplash.com/photo-1563283253-abdfa49db23c?auto=format&fit=crop&q=80&w=300',
+    }
+  ];
 
   return (
-    <ScrollView
-      style={[styles.scrollView, { backgroundColor: theme.background }]}
-      contentInset={insets}
-      contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
-      <ThemedView style={styles.container}>
-        <ThemedView style={styles.titleContainer}>
-          <ThemedText type="subtitle">Explore</ThemedText>
-          <ThemedText style={styles.centerText} themeColor="textSecondary">
-            This starter app includes example{'\n'}code to help you get started.
-          </ThemedText>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      {/* Search Header */}
+      <View style={styles.header}>
+        <View style={styles.searchBar}>
+          <Feather name="search" size={20} color="#777" />
+          <TextInput 
+            placeholder="Search station" 
+            style={styles.searchInput}
+            placeholderTextColor="#999"
+          />
+          <TouchableOpacity>
+            <Feather name="sliders" size={20} color="#777" />
+          </TouchableOpacity>
+        </View>
+        <View style={styles.toggleGroup}>
+          <TouchableOpacity style={[styles.toggleBtn, styles.toggleBtnActive]}>
+            <Feather name="map" size={18} color={DARK} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.toggleBtn}>
+            <Feather name="list" size={18} color="#FFF" />
+          </TouchableOpacity>
+        </View>
+      </View>
 
-          <ExternalLink href="https://docs.expo.dev" asChild>
-            <Pressable style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedView type="backgroundElement" style={styles.linkButton}>
-                <ThemedText type="link">Expo documentation</ThemedText>
-                <SymbolView
-                  tintColor={theme.text}
-                  name={{ ios: 'arrow.up.right.square', android: 'link', web: 'link' }}
-                  size={12}
-                />
-              </ThemedView>
-            </Pressable>
-          </ExternalLink>
-        </ThemedView>
-
-        <ThemedView style={styles.sectionsWrapper}>
-          <Collapsible title="File-based routing">
-            <ThemedText type="small">
-              This app has two screens: <ThemedText type="code">src/app/index.tsx</ThemedText> and{' '}
-              <ThemedText type="code">src/app/explore.tsx</ThemedText>
-            </ThemedText>
-            <ThemedText type="small">
-              The layout file in <ThemedText type="code">src/app/_layout.tsx</ThemedText> sets up
-              the tab navigator.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/router/introduction">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
-
-          <Collapsible title="Android, iOS, and web support">
-            <ThemedView type="backgroundElement" style={styles.collapsibleContent}>
-              <ThemedText type="small">
-                You can open this project on Android, iOS, and the web. To open the web version,
-                press <ThemedText type="smallBold">w</ThemedText> in the terminal running this
-                project.
-              </ThemedText>
-              <Image
-                source={require('@/assets/images/tutorial-web.png')}
-                style={styles.imageTutorial}
-              />
-            </ThemedView>
-          </Collapsible>
-
-          <Collapsible title="Images">
-            <ThemedText type="small">
-              For static images, you can use the <ThemedText type="code">@2x</ThemedText> and{' '}
-              <ThemedText type="code">@3x</ThemedText> suffixes to provide files for different
-              screen densities.
-            </ThemedText>
-            <Image source={require('@/assets/images/react-logo.png')} style={styles.imageReact} />
-            <ExternalLink href="https://reactnative.dev/docs/images">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
-
-          <Collapsible title="Light and dark mode components">
-            <ThemedText type="small">
-              This template has light and dark mode support. The{' '}
-              <ThemedText type="code">useColorScheme()</ThemedText> hook lets you inspect what the
-              user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-            </ThemedText>
-            <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-              <ThemedText type="linkPrimary">Learn more</ThemedText>
-            </ExternalLink>
-          </Collapsible>
-
-          <Collapsible title="Animations">
-            <ThemedText type="small">
-              This template includes an example of an animated component. The{' '}
-              <ThemedText type="code">src/components/ui/collapsible.tsx</ThemedText> component uses
-              the powerful <ThemedText type="code">react-native-reanimated</ThemedText> library to
-              animate opening this hint.
-            </ThemedText>
-          </Collapsible>
-        </ThemedView>
-        {Platform.OS === 'web' && <WebBadge />}
-      </ThemedView>
-    </ScrollView>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {stations.map((station) => (
+          <TouchableOpacity 
+            key={station.id} 
+            style={styles.stationCard}
+            onPress={() => router.push('/station')}
+          >
+            <View style={styles.cardLayout}>
+              <View style={styles.imageContainer}>
+                <Image source={{ uri: station.image }} style={styles.stationImage} />
+                <View style={styles.distanceBadge}>
+                  <Feather name="map-pin" size={10} color="#FFF" />
+                  <Text style={styles.distanceText}>{station.distance}</Text>
+                </View>
+              </View>
+              <View style={styles.detailsContainer}>
+                <Text style={styles.stationName} numberOfLines={2}>{station.name}</Text>
+                <Text style={styles.stationAddress} numberOfLines={2}>{station.address}</Text>
+                <View style={styles.ratingRow}>
+                  <Feather name="star" size={14} color="#FBBF24" style={styles.starFilled} />
+                  <Text style={styles.ratingText}>{station.rating}</Text>
+                  <Text style={styles.reviewsText}>({station.reviews} Reviews)</Text>
+                  
+                  <TouchableOpacity style={styles.heartBtn}>
+                    <Feather name="heart" size={16} color="#777" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </TouchableOpacity>
+        ))}
+        {/* Spacer for custom bottom tab */}
+        <View style={styles.bottomSpacer} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  scrollView: {
+  safeArea: {
     flex: 1,
+    backgroundColor: BG_COLOR,
   },
-  contentContainer: {
+  header: {
     flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  container: {
-    maxWidth: MaxContentWidth,
-    flexGrow: 1,
-  },
-  titleContainer: {
-    gap: Spacing.three,
     alignItems: 'center',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.six,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 20,
+    gap: 12,
   },
-  centerText: {
-    textAlign: 'center',
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  linkButton: {
+  searchBar: {
+    flex: 1,
     flexDirection: 'row',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.five,
+    alignItems: 'center',
+    backgroundColor: CARD_BG,
+    borderRadius: 30,
+    paddingHorizontal: 16,
+    height: 50,
+    gap: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: DARK,
+  },
+  toggleGroup: {
+    flexDirection: 'row',
+    backgroundColor: DARK,
+    borderRadius: 30,
+    padding: 4,
+    height: 50,
+    alignItems: 'center',
+  },
+  toggleBtn: {
+    width: 44,
+    height: 42,
+    borderRadius: 22,
     justifyContent: 'center',
-    gap: Spacing.one,
     alignItems: 'center',
   },
-  sectionsWrapper: {
-    gap: Spacing.five,
-    paddingHorizontal: Spacing.four,
-    paddingTop: Spacing.three,
+  toggleBtnActive: {
+    backgroundColor: CARD_BG,
   },
-  collapsibleContent: {
-    alignItems: 'center',
+  scrollContent: {
+    paddingHorizontal: 20,
   },
-  imageTutorial: {
-    width: '100%',
-    aspectRatio: 296 / 171,
-    borderRadius: Spacing.three,
-    marginTop: Spacing.two,
+  stationCard: {
+    backgroundColor: CARD_BG,
+    borderRadius: 24,
+    padding: 12,
+    marginBottom: 16,
   },
-  imageReact: {
+  cardLayout: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  imageContainer: {
     width: 100,
     height: 100,
-    alignSelf: 'center',
+    borderRadius: 16,
+    overflow: 'hidden',
   },
+  stationImage: {
+    width: '100%',
+    height: '100%',
+  },
+  distanceBadge: {
+    position: 'absolute',
+    bottom: 8,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  distanceText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  detailsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  stationName: {
+    color: DARK,
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 22,
+    marginBottom: 4,
+  },
+  stationAddress: {
+    fontSize: 13,
+    color: '#666',
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  ratingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  starFilled: {
+    color: '#FBBF24',
+  },
+  ratingText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: DARK,
+  },
+  reviewsText: {
+    fontSize: 13,
+    color: '#666',
+  },
+  heartBtn: {
+    marginLeft: 'auto',
+    padding: 4,
+  },
+  bottomSpacer: {
+    height: 100,
+  }
 });
