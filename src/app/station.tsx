@@ -1,14 +1,10 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-const BG_COLOR = '#F6F5F2';
-const CARD_BG = '#FFFFFF';
-const ORANGE = '#FF6B35';
-const GREEN = '#10B981';
-const DARK = '#1A1C1A';
+import { AppColors } from '@/styles';
+import { styles } from '@/styles/screens/station.styles';
 
 const INITIAL_FORM = {
   vesselName: 'MV Sentinel Aurora',
@@ -80,7 +76,7 @@ export default function StationDetailScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Feather name="arrow-left" size={24} color={DARK} />
+          <Feather name="arrow-left" size={24} color={AppColors.text} />
         </TouchableOpacity>
         <Text style={styles.headerLabel}>Pump Room Demo Form</Text>
         <View style={styles.headerGhost} />
@@ -90,7 +86,7 @@ export default function StationDetailScreen() {
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.heroBadge}>
-              <MaterialCommunityIcons name="fire-hydrant" size={14} color={ORANGE} />
+              <MaterialCommunityIcons name="fire-hydrant" size={14} color={AppColors.primary} />
               <Text style={styles.heroBadgeText}>Demo Only</Text>
             </View>
             <View style={styles.liveChip}>
@@ -172,174 +168,3 @@ export default function StationDetailScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: BG_COLOR,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 10,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: CARD_BG,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerLabel: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: DARK,
-  },
-  headerGhost: {
-    width: 40,
-    height: 40,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 36,
-    gap: 16,
-  },
-  heroCard: {
-    backgroundColor: DARK,
-    borderRadius: 30,
-    padding: 20,
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 18,
-  },
-  heroBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF0EB',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    gap: 6,
-  },
-  heroBadgeText: {
-    color: ORANGE,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  liveChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: GREEN,
-  },
-  liveChipText: {
-    color: '#D5D9D5',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  heroTitle: {
-    color: '#FFF',
-    fontSize: 24,
-    fontWeight: '800',
-    lineHeight: 31,
-    marginBottom: 10,
-  },
-  heroSubtitle: {
-    color: '#CDD2CD',
-    fontSize: 14,
-    lineHeight: 21,
-  },
-  sectionCard: {
-    backgroundColor: CARD_BG,
-    borderRadius: 28,
-    padding: 18,
-  },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: DARK,
-    marginBottom: 14,
-  },
-  fieldBlock: {
-    marginBottom: 14,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#5E645E',
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: BG_COLOR,
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: DARK,
-    borderWidth: 1,
-    borderColor: '#E4E8E4',
-  },
-  remarksInput: {
-    minHeight: 110,
-  },
-  summaryCard: {
-    backgroundColor: '#EDF8F2',
-    borderRadius: 28,
-    padding: 18,
-  },
-  summaryTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: DARK,
-    marginBottom: 14,
-  },
-  summaryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  summaryItem: {
-    width: '47%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 14,
-  },
-  summaryLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#5E645E',
-    marginBottom: 6,
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: DARK,
-  },
-  primaryButton: {
-    backgroundColor: ORANGE,
-    borderRadius: 30,
-    paddingVertical: 18,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  bottomSpacer: {
-    height: 96,
-  },
-});

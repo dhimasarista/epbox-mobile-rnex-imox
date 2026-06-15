@@ -1,5 +1,5 @@
 import { Tabs, useRouter } from 'expo-router';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { TouchableOpacity, View } from 'react-native';
 
 import {
   LucidCable,
@@ -7,11 +7,8 @@ import {
   LucideHome,
   LucideSettings,
 } from '@/components/lucide-tab-icons';
-
-const DARK = '#1A1C1A';
-const GREEN = '#10B981';
-const MUTED = '#7B7F7B';
-const ACTIVE_BG = '#333533';
+import { AppColors } from '@/styles';
+import { styles } from '@/styles/components/app-tabs.styles';
 
 const TAB_CONFIG = {
   index: LucideHome,
@@ -65,7 +62,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
                 onPress={onPress}
                 accessibilityRole="button"
                 accessibilityLabel={descriptors[route.key]?.options?.title ?? route.name}>
-                <Icon size={20} color="#FFF" strokeWidth={2.25} />
+                <Icon size={20} color={AppColors.textInverse} strokeWidth={2.25} />
               </TouchableOpacity>
             );
           }
@@ -77,7 +74,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
               onPress={onPress}
               accessibilityRole="button"
               accessibilityLabel={descriptors[route.key]?.options?.title ?? route.name}>
-              <Icon size={20} color={MUTED} strokeWidth={2.25} />
+              <Icon size={20} color={AppColors.tabMuted} strokeWidth={2.25} />
             </TouchableOpacity>
           );
         })}
@@ -101,38 +98,3 @@ export default function AppTabs() {
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  tabBarContainer: {
-    position: 'absolute',
-    bottom: 20,
-    left: 20,
-    right: 20,
-    alignItems: 'center',
-  },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: DARK,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 40,
-    gap: 10,
-  },
-  activeTab: {
-    width: 52,
-    height: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: ACTIVE_BG,
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: GREEN,
-  },
-  inactiveTab: {
-    width: 52,
-    height: 52,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 26,
-  },
-});

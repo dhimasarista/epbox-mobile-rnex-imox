@@ -6,18 +6,13 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
-const BG_COLOR = '#F6F5F2';
-const CARD_BG = '#FFFFFF';
-const DARK = '#1A1C1A';
-const GREEN = '#10B981';
-const MUTED = '#666B66';
+import { AppColors } from '@/styles';
+import { styles } from '@/styles/screens/settings.styles';
 const STORAGE_KEY = 'epbox.connection.settings';
 
 type ConnectionSettings = {
@@ -166,14 +161,14 @@ export default function SettingsScreen() {
             <Text style={styles.subtitle}>Configure this device without bundling secrets in the app.</Text>
           </View>
           <View style={styles.headerIcon}>
-            <Feather name="settings" size={18} color={DARK} />
+            <Feather name="settings" size={18} color={AppColors.text} />
           </View>
         </View>
 
         <View style={styles.formCard}>
           <View style={styles.formCardHeader}>
             <View style={styles.formBadge}>
-              <Feather name="shield" size={15} color={GREEN} />
+              <Feather name="shield" size={15} color={AppColors.success} />
               <Text style={styles.formBadgeText}>Device Configuration</Text>
             </View>
             <Text style={styles.formTitle}>Connection Setup</Text>
@@ -201,7 +196,7 @@ export default function SettingsScreen() {
           ))}
 
           <View style={styles.statusCard}>
-            <Feather name="hard-drive" size={16} color={DARK} />
+            <Feather name="hard-drive" size={16} color={AppColors.text} />
             <Text style={styles.statusText}>{isLoading ? 'Loading saved configuration...' : statusMessage}</Text>
           </View>
 
@@ -228,148 +223,3 @@ export default function SettingsScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: BG_COLOR,
-  },
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 36,
-    gap: 14,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: DARK,
-    marginBottom: 6,
-  },
-  subtitle: {
-    maxWidth: 250,
-    fontSize: 13,
-    lineHeight: 18,
-    color: MUTED,
-  },
-  headerIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: CARD_BG,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  formCard: {
-    backgroundColor: CARD_BG,
-    borderRadius: 28,
-    padding: 20,
-    gap: 16,
-  },
-  formCardHeader: {
-    gap: 10,
-  },
-  formBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: '#EDF8F2',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 6,
-  },
-  formBadgeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: GREEN,
-  },
-  formTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: DARK,
-  },
-  formDescription: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: MUTED,
-  },
-  inputGroup: {
-    gap: 8,
-  },
-  inputLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: DARK,
-  },
-  input: {
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: '#F3F5F3',
-    paddingHorizontal: 16,
-    fontSize: 15,
-    color: DARK,
-  },
-  statusCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F6F5F2',
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    gap: 10,
-  },
-  statusText: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 18,
-    color: MUTED,
-  },
-  saveButton: {
-    height: 54,
-    borderRadius: 18,
-    backgroundColor: DARK,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  saveButtonPressed: {
-    opacity: 0.92,
-  },
-  saveButtonDisabled: {
-    opacity: 0.6,
-  },
-  saveButtonText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  infoCard: {
-    backgroundColor: DARK,
-    borderRadius: 28,
-    padding: 22,
-  },
-  infoTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#B4BAB4',
-    marginBottom: 8,
-  },
-  infoValue: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#FFF',
-    marginBottom: 4,
-  },
-  infoSubtitle: {
-    fontSize: 14,
-    color: '#D4D7D4',
-  },
-  bottomSpacer: {
-    height: 100,
-  },
-});
