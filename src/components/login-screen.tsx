@@ -39,9 +39,9 @@ export default function LoginScreen() {
       <View style={styles.container}>
         <View style={styles.heroCard}>
           <Text style={styles.eyebrow}>EPBOX ENGINEERING</Text>
-          <Text style={styles.title}>Login Required</Text>
+          <Text style={styles.title}>Login Access</Text>
           <Text style={styles.subtitle}>
-            Akses ke aplikasi sekarang diproteksi dengan ID dan password sebelum masuk ke halaman utama.
+            Access to the application protected with an ID and password for security purposes.
           </Text>
         </View>
 
@@ -74,10 +74,10 @@ export default function LoginScreen() {
               value={password}
             />
           </View>
-          <View style={styles.noteCard}>
+          {/* <View style={styles.noteCard}>
             <Text style={styles.noteTitle}>Current Demo Credentials</Text>
             <Text style={styles.noteText}>Untuk sekarang credential hardcoded masih kosong untuk ID dan password.</Text>
-          </View>
+          </View> */}
 
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 

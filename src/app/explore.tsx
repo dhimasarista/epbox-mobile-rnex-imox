@@ -100,7 +100,7 @@ export default function ExploreScreen() {
             activeOpacity={room.active ? 0.9 : 1}
             disabled={!room.active}
             style={[styles.roomCard, !room.active && styles.roomCardInactive]}
-            onPress={() => router.push('/station')}>
+            onPress={() => router.push('/stations/pump-room')}>
             <View style={styles.roomTopRow}>
               <View style={styles.roomIconWrap}>
                 <MaterialCommunityIcons name={room.icon as any} size={20} color={AppColors.primary} />

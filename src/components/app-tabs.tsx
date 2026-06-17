@@ -96,6 +96,7 @@ export default function AppTabs() {
       <Tabs.Screen name="status" options={{ title: 'Status' }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
       <Tabs.Screen name="station" options={{ href: null }} />
+      <Tabs.Screen name="stations/pump-room" options={{ href: null }} />
     </Tabs>
   );
 }
