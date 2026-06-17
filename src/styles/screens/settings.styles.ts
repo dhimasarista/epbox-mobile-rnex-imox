@@ -102,5 +102,22 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     color: AppColors.textInverseMuted,
   },
+  logoutButton: {
+    minHeight: 54,
+    borderRadius: AppRadii.md,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    backgroundColor: AppColors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoutButtonPressed: {
+    opacity: 0.9,
+  },
+  logoutButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: AppColors.text,
+  },
   bottomSpacer: layoutPrimitives.bottomSpacer,
 });

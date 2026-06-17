@@ -2,6 +2,22 @@ import { StyleSheet } from 'react-native';
 
 import { AppColors, AppRadii, AppSpacing, layoutPrimitives, surfacePrimitives } from '@/styles';
 
+const BANNER_BASE_WIDTH = 412;
+const BANNER_BASE_HEIGHT = 915;
+const BANNER_BASE_SIZE = 147;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+export function getBannerHeight(screenWidth: number, screenHeight: number) {
+  const widthScale = screenWidth / BANNER_BASE_WIDTH;
+  const heightScale = screenHeight / BANNER_BASE_HEIGHT;
+  const blendedScale = widthScale * 0.7 + heightScale * 0.3;
+
+  return Math.round(BANNER_BASE_SIZE * clamp(blendedScale, 0.82, 1.15));
+}
+
 export const styles = StyleSheet.create({
   safeArea: layoutPrimitives.screen,
   scrollContent: {
@@ -59,19 +75,18 @@ export const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: AppColors.surface,
   },
-  bikeCard: {
+  bannerCard: {
     marginBottom: AppSpacing.xxl,
     borderRadius: AppRadii.xxl,
     backgroundColor: AppColors.surface,
     padding: 8,
   },
-  bikeBackground: {
-    height: 220,
+  bannerBackground: {
     borderRadius: AppRadii.xl,
     backgroundColor: '#D1E8E2',
     overflow: 'hidden',
   },
-  bikeImage: {
+  bannerImage: {
     width: '100%',
     height: '100%',
   },
@@ -145,6 +160,20 @@ export const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: AppSpacing.lg,
     justifyContent: 'space-between',
+  },
+  dashboardHeader: {
+    marginBottom: AppSpacing.xxl,
+    gap: AppSpacing.xs,
+  },
+  dashboardTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: AppColors.text,
+  },
+  dashboardSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: AppColors.textMuted,
   },
   statCard: {
     width: '48%',

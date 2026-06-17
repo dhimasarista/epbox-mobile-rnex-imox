@@ -12,11 +12,13 @@ export const styles = StyleSheet.create({
   },
   tabBar: {
     flexDirection: 'row',
+    width: '100%',
+    maxWidth: 420,
+    justifyContent: 'space-around',
     backgroundColor: AppColors.text,
     paddingHorizontal: AppSpacing.md,
     paddingVertical: AppSpacing.sm,
     borderRadius: 40,
-    gap: AppSpacing.md,
   },
   activeTab: {
     width: 52,

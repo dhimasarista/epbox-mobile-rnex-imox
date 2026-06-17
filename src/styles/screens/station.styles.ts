@@ -1,6 +1,13 @@
 import { StyleSheet } from 'react-native';
 
-import { AppColors, AppRadii, AppSpacing, layoutPrimitives, surfacePrimitives, textPrimitives } from '@/styles';
+import {
+  AppColors,
+  AppRadii,
+  AppSpacing,
+  layoutPrimitives,
+  surfacePrimitives,
+  textPrimitives,
+} from '@/styles';
 
 export const styles = StyleSheet.create({
   safeArea: layoutPrimitives.screen,
@@ -58,6 +65,12 @@ export const styles = StyleSheet.create({
     borderRadius: AppRadii.full,
     backgroundColor: AppColors.success,
   },
+  plcDot: {
+    backgroundColor: AppColors.success,
+  },
+  dashboardDot: {
+    backgroundColor: AppColors.primary,
+  },
   liveChipText: {
     fontSize: 12,
     fontWeight: '600',
@@ -80,8 +93,27 @@ export const styles = StyleSheet.create({
     borderRadius: AppRadii.xxl,
     padding: AppSpacing.section,
   },
-  sectionTitle: {
-    ...textPrimitives.sectionTitle,
+  sectionHeaderRow: {
+    ...layoutPrimitives.headerRow,
+    alignItems: 'center',
+    gap: AppSpacing.md,
+    marginBottom: AppSpacing.md,
+  },
+  sectionTitle: textPrimitives.sectionTitle,
+  sectionBadge: {
+    ...layoutPrimitives.centerRow,
+    width: 28,
+    height: 28,
+    borderRadius: AppRadii.full,
+    backgroundColor: AppColors.backgroundMuted,
+  },
+  inlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: AppRadii.full,
+  },
+  sectionDescription: {
+    ...textPrimitives.body,
     marginBottom: AppSpacing.xl,
   },
   fieldBlock: {
@@ -93,18 +125,12 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: AppColors.border,
   },
-  remarksInput: {
-    minHeight: 110,
-  },
   summaryCard: {
-    backgroundColor: AppColors.surfaceSuccess,
+    backgroundColor: AppColors.surfaceAccent,
     borderRadius: AppRadii.xxl,
     padding: AppSpacing.section,
   },
-  summaryTitle: {
-    ...textPrimitives.sectionTitle,
-    marginBottom: AppSpacing.xl,
-  },
+  summaryTitle: textPrimitives.sectionTitle,
   summaryGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -125,6 +151,20 @@ export const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     color: AppColors.text,
+  },
+  statusCard: {
+    ...layoutPrimitives.centerRow,
+    backgroundColor: AppColors.surface,
+    borderRadius: AppRadii.md,
+    paddingHorizontal: AppSpacing.xl,
+    paddingVertical: AppSpacing.lg,
+    gap: AppSpacing.md,
+  },
+  statusText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: AppColors.textMuted,
   },
   primaryButton: {
     backgroundColor: AppColors.primary,

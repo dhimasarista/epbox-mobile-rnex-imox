@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '@/providers/auth-provider';
 import { AppColors } from '@/styles';
 import { styles } from '@/styles/screens/settings.styles';
 const STORAGE_KEY = 'epbox.connection.settings';
@@ -85,6 +86,7 @@ async function setStoredSettings(value: string) {
 }
 
 export default function SettingsScreen() {
+  const { signOut } = useAuth();
   const [form, setForm] = useState(DEFAULT_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -147,6 +149,10 @@ export default function SettingsScreen() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
   };
 
   return (
@@ -217,6 +223,10 @@ export default function SettingsScreen() {
           <Text style={styles.infoValue}>IMOX 2026</Text>
           <Text style={styles.infoSubtitle}>Firmware version 0.1.0</Text>
         </View>
+
+        <Pressable onPress={handleSignOut} style={({ pressed }) => [styles.logoutButton, pressed && styles.logoutButtonPressed]}>
+          <Text style={styles.logoutButtonText}>Sign Out</Text>
+        </Pressable>
 
         <View style={styles.bottomSpacer} />
       </ScrollView>

@@ -58,6 +58,11 @@ export const AppColors = {
   surfaceMuted: '#F3F5F3',
   surfaceSuccess: '#EDF8F2',
   surfaceAccent: '#FEF0EB',
+  surfaceError: '#FDF2F2',
+  background: '#F6F5F2',
+  backgroundMuted: '#F3F5F3',
+  backgroundAccent: '#FEF0EB',
+  backgroundError: '#FDF2F2',
   text: '#1A1C1A',
   textMuted: '#5E645E',
   textSubtle: '#6B706B',
@@ -72,6 +77,7 @@ export const AppColors = {
   tabMuted: '#7B7F7B',
   tabActive: '#333533',
   warning: "#FBBF24",
+  error: "#EF4444",
 } as const;
 
 export const AppSpacing = {

@@ -1,6 +1,13 @@
 import { StyleSheet } from 'react-native';
 
-import { AppColors, AppRadii, AppSpacing, layoutPrimitives, surfacePrimitives, textPrimitives } from '@/styles';
+import {
+  AppColors,
+  AppRadii,
+  AppSpacing,
+  layoutPrimitives,
+  surfacePrimitives,
+  textPrimitives,
+} from '@/styles';
 
 export const styles = StyleSheet.create({
   safeArea: layoutPrimitives.screen,
@@ -34,6 +41,13 @@ export const styles = StyleSheet.create({
     ...surfacePrimitives.darkCard,
     marginBottom: AppSpacing.xxl,
   },
+  headerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: AppSpacing.md,
+    marginBottom: AppSpacing.sm,
+  },
   heroBadge: {
     ...layoutPrimitives.centerRow,
     alignSelf: 'flex-start',
@@ -42,7 +56,6 @@ export const styles = StyleSheet.create({
     paddingVertical: AppSpacing.sm,
     borderRadius: AppRadii.full,
     gap: AppSpacing.xs,
-    marginBottom: AppSpacing.xl,
   },
   heroBadgeText: {
     ...textPrimitives.captionStrong,
@@ -96,10 +109,13 @@ export const styles = StyleSheet.create({
     padding: AppSpacing.section,
     marginBottom: AppSpacing.xl,
   },
+  roomCardInactive: {
+    opacity: 0.72,
+  },
   roomTopRow: {
     ...layoutPrimitives.headerRow,
     alignItems: 'center',
-    marginBottom: AppSpacing.xxl,
+    marginBottom: AppSpacing.xl,
   },
   roomIconWrap: {
     width: 44,
@@ -130,11 +146,16 @@ export const styles = StyleSheet.create({
   roomSubtitle: {
     fontSize: 14,
     color: AppColors.textSubtle,
+    marginBottom: AppSpacing.sm,
+  },
+  roomDescription: {
+    ...textPrimitives.body,
     marginBottom: AppSpacing.xl,
   },
   metaRow: {
     ...layoutPrimitives.headerRow,
     gap: AppSpacing.md,
+    marginBottom: AppSpacing.xl,
   },
   metaItem: {
     ...layoutPrimitives.centerRow,
@@ -144,12 +165,6 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: AppColors.textSubtle,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: AppRadii.full,
-    backgroundColor: AppColors.success,
   },
   dotSuccess: {
     width: 8,
@@ -161,13 +176,54 @@ export const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: AppRadii.full,
-    backgroundColor: AppColors.warning,
+    backgroundColor: AppColors.primary,
   },
   dotNeutral: {
     width: 8,
     height: 8,
     borderRadius: AppRadii.full,
-    backgroundColor: AppColors.textSubtle,
+    backgroundColor: AppColors.textMuted,
+  },
+  sourceGrid: {
+    gap: AppSpacing.lg,
+  },
+  sourceCard: {
+    backgroundColor: AppColors.backgroundMuted,
+    borderRadius: AppRadii.lg,
+    padding: AppSpacing.xl,
+    gap: AppSpacing.xs,
+  },
+  sourceHeader: {
+    ...layoutPrimitives.centerRow,
+    gap: AppSpacing.xs,
+    marginBottom: AppSpacing.xs,
+  },
+  sourceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: AppRadii.full,
+  },
+  sourceDotPlc: {
+    backgroundColor: AppColors.success,
+  },
+  sourceDotDashboard: {
+    backgroundColor: AppColors.primary,
+  },
+  sourceTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: AppColors.text,
+  },
+  sourcePoint: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: AppColors.textMuted,
+  },
+  roomAction: {
+    marginTop: AppSpacing.xl,
+    fontSize: 13,
+    fontWeight: '700',
+    color: AppColors.primary,
   },
   bottomSpacer: layoutPrimitives.bottomSpacer,
 });

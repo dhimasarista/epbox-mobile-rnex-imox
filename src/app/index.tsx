@@ -1,11 +1,16 @@
+import { useNetworkSignal } from '@/hooks/use-network-signal';
 import { AppColors } from '@/styles';
-import { styles } from '@/styles/screens/home.styles';
+import { getBannerHeight, styles } from '@/styles/screens/home.styles';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import LottieView from 'lottie-react-native';
+import { ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen() {
+  const { width, height } = useWindowDimensions();
+  const bannerHeight = getBannerHeight(width, height);
+  const signal = useNetworkSignal();
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -32,44 +37,43 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* E-Bike Card */}
-        <View style={styles.bikeCard}>
-          <View style={styles.bikeBackground}>
-            {/* We use a placeholder image for the bike since we don't have the asset */}
-            <Image 
-              source={{ uri: 'https://images.unsplash.com/photo-1571188654248-7a89213915f7?auto=format&fit=crop&q=80&w=800' }} 
-              style={styles.bikeImage}
-              contentFit="cover"
+        {/* vessel Card */}
+        <View style={styles.bannerCard}>
+          <View style={[styles.bannerBackground, { height: bannerHeight }]}>
+            <LottieView
+              source={require('../../assets/animations/Vessel.json')}
+              style={styles.bannerImage}
+              autoPlay
+              loop
             />
-            <View style={styles.unlockButtonOverlay}>
+            {/* <View style={styles.unlockButtonOverlay}>
               <TouchableOpacity style={styles.unlockButton}>
                   <Text style={styles.unlockText}>Tap to Unlock</Text>
                   <View style={styles.unlockIconWrapper}>
                     <Feather name="unlock" size={16} color={AppColors.primary} />
                 </View>
               </TouchableOpacity>
-            </View>
+            </View> */}
           </View>
         </View>
 
         {/* Battery Card */}
         <View style={styles.batteryCard}>
           <View>
-            <Text style={styles.batteryPercent}>48%</Text>
-            <Text style={styles.batteryLabel}>Battery</Text>
+            <Text style={styles.batteryPercent}>{signal.value}</Text>
+            <Text style={styles.batteryLabel}>{signal.label}</Text>
           </View>
           <View style={styles.batteryVisualizer}>
-            {/* Visualizer bars */}
-            <View style={[styles.batteryBar, styles.batteryBarActive]} />
-            <View style={[styles.batteryBar, styles.batteryBarActive]} />
-            <View style={[styles.batteryBar, styles.batteryBarActive]} />
-            <View style={[styles.batteryBar, styles.batteryBarActive]} />
-            <View style={[styles.batteryBar, styles.batteryBarActive]} />
-            <View style={styles.batteryBar} />
-            <View style={styles.batteryBar} />
-            <View style={styles.batteryBar} />
-            <View style={styles.batteryBar} />
-            <View style={styles.batteryBar} />
+            {Array.from({ length: signal.totalBars }, (_, index) => {
+              const isActive = index < signal.activeBars;
+
+              return (
+                <View
+                  key={`signal-bar-${index}`}
+                  style={[styles.batteryBar, isActive && styles.batteryBarActive]}
+                />
+              );
+            })}
           </View>
         </View>
 
@@ -78,13 +82,13 @@ export default function HomeScreen() {
           {/* Item 1 */}
           <View style={styles.statCard}>
             <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Total Charging{"\n"}Sessions</Text>
+              <Text style={styles.statTitle}>Active Data{"\n"}Streams</Text>
               <View style={styles.statIconContainer}>
                 <Feather name="zap" size={14} color={AppColors.primary} />
                 
               </View>
             </View>
-            <Text style={styles.statValue}>15 <Text style={styles.statUnit}>Times</Text></Text>
+            <Text style={styles.statValue}>7 <Text style={styles.statUnit}>Topics</Text></Text>
           </View>
 
           {/* Item 2 */}
@@ -101,18 +105,18 @@ export default function HomeScreen() {
           {/* Item 3 */}
           <View style={styles.statCard}>
             <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Average{"\n"}Charging Time</Text>
+              <Text style={styles.statTitle}>Response{"\n"}Time</Text>
               <View style={styles.statIconContainer}>
                 <Feather name="clock" size={14} color={AppColors.primary} />
               </View>
             </View>
-            <Text style={styles.statValue}>2h15m</Text>
+            <Text style={styles.statValue}>248 <Text style={styles.statUnit}>ms</Text></Text>
           </View>
 
           {/* Item 4 */}
           <View style={styles.statCard}>
             <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Estimated{"\n"}Distance Range</Text>
+              <Text style={styles.statTitle}>Distance{"\n"}to Device</Text>
               <View style={styles.statIconContainer}>
                 <Feather name="map-pin" size={14} color={AppColors.primary} />
               </View>

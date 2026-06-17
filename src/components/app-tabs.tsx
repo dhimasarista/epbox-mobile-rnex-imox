@@ -86,6 +86,7 @@ function CustomTabBar({ state, descriptors, navigation }: any) {
 export default function AppTabs() {
   return (
     <Tabs
+      backBehavior="history"
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,

@@ -25,16 +25,14 @@
     },
     "plugins": [
       "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "backgroundColor": "#208AEF",
-          "android": {
-            "image": "./assets/images/splash-icon.png",
-            "imageWidth": 76
+        [
+          "expo-splash-screen",
+          {
+            "backgroundColor": "#208AEF",
+            "image": "./assets/images/image.png",
+            "imageWidth": 180
           }
-        }
-      ],
+        ],
       "expo-secure-store"
     ],
     "experiments": {
