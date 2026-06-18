@@ -1,15 +1,31 @@
+import { useFocusEffect } from 'expo-router';
 import { useNetworkSignal } from '@/hooks/use-network-signal';
 import { AppColors } from '@/styles';
 import { getBannerHeight, styles } from '@/styles/screens/home.styles';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import LottieView from 'lottie-react-native';
+import { useCallback, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen() {
   const { width, height } = useWindowDimensions();
   const bannerHeight = getBannerHeight(width, height);
-  const signal = useNetworkSignal();
+  const [isSignalPollingEnabled, setIsSignalPollingEnabled] = useState(true);
+  const signal = useNetworkSignal({
+    enabled: isSignalPollingEnabled,
+    refreshIntervalMs: 2000,
+  });
+
+  useFocusEffect(
+    useCallback(() => {
+      setIsSignalPollingEnabled(true);
+
+      return () => {
+        setIsSignalPollingEnabled(false);
+      };
+    }, [])
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>

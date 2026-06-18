@@ -21,13 +21,25 @@ import {
 } from '@/lib/mqtt-settings';
 
 export type MqttConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
+export type MqttLogLevel = 'info' | 'success' | 'warning' | 'error';
+
+export type MqttLogEntry = {
+  id: string;
+  level: MqttLogLevel;
+  message: string;
+  timestamp: string;
+};
 
 type MqttContextValue = {
+  clearLogs: () => void;
   connect: () => Promise<void>;
+  connectedAt: number | null;
   disconnect: () => void;
   endpointLabel: string;
   isSettingsLoading: boolean;
   lastError: string | null;
+  lastConnectedAt: number | null;
+  logs: MqttLogEntry[];
   refreshSettings: () => Promise<void>;
   settings: MqttConnectionSettings;
   status: MqttConnectionState;
@@ -36,6 +48,14 @@ type MqttContextValue = {
 
 const MqttContext = createContext<MqttContextValue | null>(null);
 
+function formatLogTimestamp() {
+  return new Date().toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 export function MqttProvider({ children }: PropsWithChildren) {
   const clientRef = useRef<MqttClient | null>(null);
   const [settings, setSettings] = useState(DEFAULT_MQTT_CONNECTION_SETTINGS);
@@ -43,6 +63,39 @@ export function MqttProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<MqttConnectionState>('idle');
   const [statusMessage, setStatusMessage] = useState('MQTT idle.');
   const [lastError, setLastError] = useState<string | null>(null);
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+  const [lastConnectedAt, setLastConnectedAt] = useState<number | null>(null);
+  const [logs, setLogs] = useState<MqttLogEntry[]>([
+    {
+      id: 'mqtt-log-init',
+      level: 'info',
+      message: 'MQTT panel ready.',
+      timestamp: formatLogTimestamp(),
+    },
+  ]);
+
+  const appendLog = useCallback((level: MqttLogLevel, message: string) => {
+    setLogs((currentLogs) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        level,
+        message,
+        timestamp: formatLogTimestamp(),
+      },
+      ...currentLogs,
+    ].slice(0, 12));
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setLogs([
+      {
+        id: `mqtt-log-cleared-${Date.now()}`,
+        level: 'info',
+        message: 'Log cleared by operator.',
+        timestamp: formatLogTimestamp(),
+      },
+    ]);
+  }, []);
 
   const disposeClient = useCallback((nextStatus?: MqttConnectionState, nextMessage?: string) => {
     const client = clientRef.current;
@@ -59,6 +112,10 @@ export function MqttProvider({ children }: PropsWithChildren) {
 
     if (nextMessage) {
       setStatusMessage(nextMessage);
+    }
+
+    if (nextStatus && nextStatus !== 'connected') {
+      setConnectedAt(null);
     }
   }, []);
 
@@ -87,6 +144,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
       setSettings(latestSettings);
 
       if (!hasMqttConnectionSettings(latestSettings)) {
+        appendLog('warning', 'Connect requested without saved broker settings.');
         setLastError('MQTT settings are empty. Save broker details in Settings first.');
         setStatus('error');
         setStatusMessage('MQTT settings are required before connecting.');
@@ -110,6 +168,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
       setLastError(null);
       setStatus('connecting');
       setStatusMessage(`Connecting to ${brokerUrl}`);
+      appendLog('info', `Connecting to ${brokerUrl}`);
 
       const client = mqtt.connect(brokerUrl, options);
       clientRef.current = client;
@@ -122,6 +181,10 @@ export function MqttProvider({ children }: PropsWithChildren) {
         setLastError(null);
         setStatus('connected');
         setStatusMessage('MQTT connected.');
+        const now = Date.now();
+        setConnectedAt(now);
+        setLastConnectedAt(now);
+        appendLog('success', 'Broker connected successfully.');
       });
 
       client.on('reconnect', () => {
@@ -131,6 +194,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
 
         setStatus('connecting');
         setStatusMessage('Reconnecting to broker...');
+        appendLog('warning', 'Reconnecting to broker...');
       });
 
       client.on('offline', () => {
@@ -140,6 +204,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
 
         setStatus('disconnected');
         setStatusMessage('MQTT is offline.');
+        appendLog('warning', 'MQTT session went offline.');
       });
 
       client.on('close', () => {
@@ -153,6 +218,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
         setStatusMessage((currentMessage) =>
           currentMessage === 'MQTT connected.' ? 'MQTT disconnected.' : currentMessage
         );
+        appendLog('info', 'MQTT session closed.');
       });
 
       client.on('error', (error) => {
@@ -165,6 +231,8 @@ export function MqttProvider({ children }: PropsWithChildren) {
         setLastError(errorMessage);
         setStatus('error');
         setStatusMessage(errorMessage);
+        setConnectedAt(null);
+        appendLog('error', errorMessage);
         client.end(true);
       });
     } catch (error) {
@@ -173,34 +241,44 @@ export function MqttProvider({ children }: PropsWithChildren) {
 
       disposeClient('error', errorMessage);
       setLastError(errorMessage);
+      appendLog('error', errorMessage);
     }
-  }, [disposeClient]);
+  }, [appendLog, disposeClient]);
 
   const disconnect = useCallback(() => {
     setLastError(null);
     disposeClient('disconnected', 'MQTT disconnected.');
-  }, [disposeClient]);
+    appendLog('info', 'MQTT disconnected by operator.');
+  }, [appendLog, disposeClient]);
 
   const endpointLabel = useMemo(() => getMqttEndpointLabel(settings), [settings]);
 
   const value = useMemo<MqttContextValue>(
     () => ({
+      clearLogs,
       connect,
+      connectedAt,
       disconnect,
       endpointLabel,
       isSettingsLoading,
       lastError,
+      lastConnectedAt,
+      logs,
       refreshSettings,
       settings,
       status,
       statusMessage,
     }),
     [
+      clearLogs,
       connect,
+      connectedAt,
       disconnect,
       endpointLabel,
       isSettingsLoading,
       lastError,
+      lastConnectedAt,
+      logs,
       refreshSettings,
       settings,
       status,

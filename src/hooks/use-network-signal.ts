@@ -1,5 +1,6 @@
 import type { NetInfoCellularGeneration, NetInfoState } from '@react-native-community/netinfo';
-import { useNetInfo } from '@react-native-community/netinfo/lib/module/index.js';
+import { addEventListener, fetch } from '@react-native-community/netinfo/lib/module/index.js';
+import { useEffect, useRef, useState } from 'react';
 
 const TOTAL_SIGNAL_BARS = 10;
 
@@ -8,6 +9,11 @@ type NetworkSignal = {
   totalBars: number;
   label: string;
   value: string;
+};
+
+type UseNetworkSignalOptions = {
+  enabled?: boolean;
+  refreshIntervalMs?: number;
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -93,8 +99,65 @@ function getSignalFromState(state: NetInfoState): NetworkSignal {
   };
 }
 
-export function useNetworkSignal() {
-  const netInfo = useNetInfo();
+export function useNetworkSignal(options: UseNetworkSignalOptions = {}) {
+  const { enabled = true, refreshIntervalMs = 2000 } = options;
+  const [liveNetInfo, setLiveNetInfo] = useState<NetInfoState>({
+    type: 'unknown',
+    isConnected: null,
+    isInternetReachable: null,
+    details: null,
+  } as NetInfoState);
+  const isFetchingRef = useRef(false);
 
-  return getSignalFromState(netInfo);
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    let isMounted = true;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = addEventListener((nextState) => {
+      if (isMounted) {
+        setLiveNetInfo(nextState);
+      }
+    });
+
+    const pollNetworkState = async () => {
+      if (isFetchingRef.current) {
+        if (isMounted) {
+          timeoutId = setTimeout(pollNetworkState, refreshIntervalMs);
+        }
+        return;
+      }
+
+      isFetchingRef.current = true;
+
+      try {
+        const nextState = await fetch();
+
+        if (isMounted) {
+          setLiveNetInfo(nextState);
+        }
+      } finally {
+        isFetchingRef.current = false;
+
+        if (isMounted) {
+          timeoutId = setTimeout(pollNetworkState, refreshIntervalMs);
+        }
+      }
+    };
+
+    void pollNetworkState();
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [enabled, refreshIntervalMs]);
+
+  return getSignalFromState(liveNetInfo);
 }

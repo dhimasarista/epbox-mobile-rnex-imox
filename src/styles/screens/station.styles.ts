@@ -9,6 +9,38 @@ import {
   textPrimitives,
 } from '@/styles';
 
+export type SignalTone = 'normal' | 'warning' | 'danger';
+
+export function getSignalPalette(tone: SignalTone) {
+  if (tone === 'danger') {
+    return {
+      surface: AppColors.surfaceError,
+      border: '#F4B7B7',
+      accent: AppColors.error,
+      text: AppColors.error,
+      track: '#F1D4D4',
+    };
+  }
+
+  if (tone === 'warning') {
+    return {
+      surface: '#FFF7E0',
+      border: '#F2D17A',
+      accent: AppColors.warning,
+      text: '#A16207',
+      track: '#F3E6B5',
+    };
+  }
+
+  return {
+    surface: AppColors.surfaceSuccess,
+    border: '#9BD7B6',
+    accent: AppColors.success,
+    text: AppColors.success,
+    track: '#CBE9D8',
+  };
+}
+
 export const styles = StyleSheet.create({
   safeArea: layoutPrimitives.screen,
   header: {
@@ -68,20 +100,10 @@ export const styles = StyleSheet.create({
   plcDot: {
     backgroundColor: AppColors.success,
   },
-  dashboardDot: {
-    backgroundColor: AppColors.primary,
-  },
   liveChipText: {
     fontSize: 12,
     fontWeight: '600',
     color: '#D5D9D5',
-  },
-  heroTitle: {
-    color: AppColors.textInverse,
-    fontSize: 24,
-    fontWeight: '800',
-    lineHeight: 31,
-    marginBottom: AppSpacing.md,
   },
   heroSubtitle: {
     fontSize: 14,
@@ -93,29 +115,6 @@ export const styles = StyleSheet.create({
     borderRadius: AppRadii.xxl,
     padding: AppSpacing.section,
   },
-  sectionHeaderRow: {
-    ...layoutPrimitives.headerRow,
-    alignItems: 'center',
-    gap: AppSpacing.md,
-    marginBottom: AppSpacing.md,
-  },
-  sectionTitle: textPrimitives.sectionTitle,
-  sectionBadge: {
-    ...layoutPrimitives.centerRow,
-    width: 28,
-    height: 28,
-    borderRadius: AppRadii.full,
-    backgroundColor: AppColors.backgroundMuted,
-  },
-  inlineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: AppRadii.full,
-  },
-  sectionDescription: {
-    ...textPrimitives.body,
-    marginBottom: AppSpacing.xl,
-  },
   fieldBlock: {
     marginBottom: AppSpacing.xl,
   },
@@ -126,21 +125,79 @@ export const styles = StyleSheet.create({
     marginBottom: AppSpacing.sm,
   },
   fieldLabel: textPrimitives.label,
-  input: {
-    ...surfacePrimitives.textInput,
-    borderWidth: 1,
-    borderColor: AppColors.border,
-  },
-  pressureValue: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: AppColors.text,
-  },
-  pressureValueDanger: {
-    color: AppColors.error,
-  },
   pressureSlider: {
-    height: 42,
+    height: 34,
+  },
+  signalValueChip: {
+    ...layoutPrimitives.centerRow,
+    gap: AppSpacing.xs,
+    paddingHorizontal: AppSpacing.md,
+    paddingVertical: AppSpacing.xs,
+    borderRadius: AppRadii.full,
+    borderWidth: 1,
+  },
+  signalValueDot: {
+    width: 8,
+    height: 8,
+    borderRadius: AppRadii.full,
+  },
+  signalValueText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  signalSliderShell: {
+    borderRadius: AppRadii.lg,
+    borderWidth: 1,
+    paddingHorizontal: AppSpacing.md,
+    paddingTop: AppSpacing.sm,
+    paddingBottom: AppSpacing.md,
+    shadowColor: '#000000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 1,
+  },
+  signalSliderShellNormal: {
+    backgroundColor: AppColors.surfaceSuccess,
+    borderColor: '#9BD7B6',
+  },
+  signalSliderShellWarning: {
+    backgroundColor: '#FFF9E8',
+    borderColor: '#F2D17A',
+  },
+  signalSliderShellDanger: {
+    backgroundColor: AppColors.surfaceError,
+    borderColor: '#F4B7B7',
+  },
+  signalBandsRow: {
+    flexDirection: 'row',
+    gap: AppSpacing.xs,
+    marginTop: AppSpacing.xs,
+  },
+  signalBand: {
+    flex: 1,
+    height: 6,
+    borderRadius: AppRadii.full,
+    opacity: 0.25,
+  },
+  signalBandNormal: {
+    backgroundColor: AppColors.success,
+  },
+  signalBandWarning: {
+    backgroundColor: AppColors.warning,
+  },
+  signalBandDanger: {
+    backgroundColor: AppColors.error,
+  },
+  signalBandActive: {
+    height: 8,
+    opacity: 1,
+  },
+  signalStateBadge: {
+    paddingHorizontal: AppSpacing.md,
+    paddingVertical: AppSpacing.xxs,
+    borderRadius: AppRadii.full,
+    borderWidth: 1,
   },
   sliderRangeRow: {
     ...layoutPrimitives.centerRow,
@@ -153,22 +210,10 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: AppColors.textSubtle,
   },
-  pressureLimitBadge: {
-    paddingHorizontal: AppSpacing.md,
-    paddingVertical: AppSpacing.xxs,
-    borderRadius: AppRadii.full,
-    backgroundColor: AppColors.surfaceMuted,
-  },
-  pressureLimitBadgeDanger: {
-    backgroundColor: AppColors.surfaceError,
-  },
-  pressureLimitText: {
+  signalStateText: {
     fontSize: 11,
     fontWeight: '800',
-    color: AppColors.textMuted,
-  },
-  pressureLimitTextDanger: {
-    color: AppColors.error,
+    letterSpacing: 0.3,
   },
   stepperButtonDisabled: {
     opacity: 0.45,
@@ -258,21 +303,6 @@ export const styles = StyleSheet.create({
     backgroundColor: AppColors.surfaceError,
     borderColor: '#F8B4B4',
   },
-  alarmToggleTrack: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: AppSpacing.md,
-  },
-  alarmToggleLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    color: AppColors.textSubtle,
-  },
-  alarmToggleLabelActive: {
-    color: AppColors.text,
-  },
   alarmToggleThumb: {
     position: 'absolute',
     top: 4,
@@ -319,10 +349,8 @@ export const styles = StyleSheet.create({
     paddingLeft: AppSpacing.xxl,
     paddingRight: AppSpacing.xl,
   },
-  dashboardReadoutInput: {
+  dashboardReadoutValue: {
     flex: 1,
-    minWidth: 0,
-    paddingVertical: 0,
     fontSize: 18,
     fontWeight: '800',
     color: AppColors.text,
@@ -399,83 +427,12 @@ export const styles = StyleSheet.create({
     color: AppColors.text,
   },
   dashboardPressureSlider: {
-    height: 42,
-  },
-  dashboardInputShell: {
-    ...layoutPrimitives.centerRow,
-    minHeight: 52,
-    borderRadius: AppRadii.md,
-    backgroundColor: AppColors.surface,
-    borderWidth: 1,
-    borderColor: AppColors.border,
-    paddingLeft: AppSpacing.xxl,
-    paddingRight: AppSpacing.xl,
-    marginTop: AppSpacing.sm,
-  },
-  dashboardNumberInput: {
-    flex: 1,
-    minWidth: 0,
-    paddingVertical: 0,
-    fontSize: 16,
-    fontWeight: '800',
-    color: AppColors.text,
-  },
-  dashboardUnitText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: AppColors.textSubtle,
+    height: 34,
   },
   summaryCard: {
     backgroundColor: AppColors.surfaceAccent,
     borderRadius: AppRadii.xxl,
     padding: AppSpacing.section,
-  },
-  summaryTitle: textPrimitives.sectionTitle,
-  summaryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: AppSpacing.lg,
-  },
-  summaryItem: {
-    width: '47%',
-    backgroundColor: AppColors.surface,
-    borderRadius: AppRadii.lg,
-    padding: AppSpacing.xl,
-  },
-  summaryLabel: {
-    ...textPrimitives.label,
-    marginBottom: AppSpacing.xs,
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: AppColors.text,
-  },
-  statusCard: {
-    ...layoutPrimitives.centerRow,
-    backgroundColor: AppColors.surface,
-    borderRadius: AppRadii.md,
-    paddingHorizontal: AppSpacing.xl,
-    paddingVertical: AppSpacing.lg,
-    gap: AppSpacing.md,
-  },
-  statusText: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 18,
-    color: AppColors.textMuted,
-  },
-  primaryButton: {
-    backgroundColor: AppColors.primary,
-    borderRadius: AppRadii.hero,
-    paddingVertical: AppSpacing.section,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: AppColors.textInverse,
-    fontSize: 16,
-    fontWeight: '700',
   },
   bottomSpacer: {
     height: 96,

@@ -6,30 +6,39 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import {
+  DEFAULT_ACCOMMODATION_ROOM_INPUTS,
+  getStoredAccommodationRoomInputs,
+} from '@/lib/accommodation-room-demo';
+import {
   DEFAULT_PUMP_ROOM_PLC_INPUTS,
   getStoredPumpRoomPlcInputs,
-  MONITORED_ROOMS
 } from '@/lib/pump-room-demo';
+import { MONITORED_ROOMS } from '@/lib/room-directory';
 import { AppColors } from '@/styles';
 import { styles } from '@/styles/screens/explore.styles';
 
 export default function ExploreScreen() {
   const router = useRouter();
   const [pumpInputs, setPumpInputs] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
+  const [accommodationInputs, setAccommodationInputs] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
 
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
 
-      async function loadPumpInputs() {
-        const stored = await getStoredPumpRoomPlcInputs();
+      async function loadRoomInputs() {
+        const [storedPumpRoom, storedAccommodationRoom] = await Promise.all([
+          getStoredPumpRoomPlcInputs(),
+          getStoredAccommodationRoomInputs(),
+        ]);
 
         if (isMounted) {
-          setPumpInputs(stored);
+          setPumpInputs(storedPumpRoom);
+          setAccommodationInputs(storedAccommodationRoom);
         }
       }
 
-      loadPumpInputs();
+      loadRoomInputs();
 
       return () => {
         isMounted = false;
@@ -39,6 +48,18 @@ export default function ExploreScreen() {
 
   const activeRooms = MONITORED_ROOMS.filter((room) => room.active).length;
   const inactiveRooms = MONITORED_ROOMS.length - activeRooms;
+
+  const getRoomMetricValue = (roomId: (typeof MONITORED_ROOMS)[number]['id']) => {
+    if (roomId === 'pump-room') {
+      return pumpInputs.dischargeFlowRate;
+    }
+
+    if (roomId === 'accommodation-room') {
+      return accommodationInputs.temperatureValue;
+    }
+
+    return 'Standby';
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -100,14 +121,14 @@ export default function ExploreScreen() {
             activeOpacity={room.active ? 0.9 : 1}
             disabled={!room.active}
             style={[styles.roomCard, !room.active && styles.roomCardInactive]}
-            onPress={() => router.push('/stations/pump-room')}>
+            onPress={() => router.push(room.route)}>
             <View style={styles.roomTopRow}>
               <View style={styles.roomIconWrap}>
                 <MaterialCommunityIcons name={room.icon as any} size={20} color={AppColors.primary} />
               </View>
               <View style={styles.metricChip}>
                 <Text style={styles.metricValue}>
-                  {room.active ? pumpInputs.dischargeFlowRate : 'Standby'}
+                  {room.active ? getRoomMetricValue(room.id) : 'Standby'}
                 </Text>
                 <Text style={styles.metricLabel}>{room.metricLabel}</Text>
               </View>

@@ -134,8 +134,73 @@ export const styles = StyleSheet.create({
     fontWeight: '800',
     color: AppColors.textInverse,
   },
+  mqttInlineHint: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: AppColors.textSubtle,
+  },
+  sectionHeader: {
+    ...layoutPrimitives.headerRow,
+    alignItems: 'center',
+    marginBottom: AppSpacing.md,
+  },
+  sectionLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: AppColors.textSubtle,
+  },
+  sectionLabelStandalone: {
+    marginBottom: AppSpacing.md,
+  },
+  clearLogButton: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: AppRadii.full,
+    backgroundColor: AppColors.surface,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  clearLogButtonPressed: {
+    opacity: 0.9,
+  },
+  clearLogButtonText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: AppColors.text,
+  },
+  logFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: AppSpacing.sm,
+    marginBottom: AppSpacing.md,
+  },
+  logFilterChip: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: AppRadii.full,
+    backgroundColor: AppColors.surface,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logFilterChipActive: {
+    backgroundColor: AppColors.text,
+    borderColor: AppColors.text,
+  },
+  logFilterChipText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: AppColors.textSubtle,
+  },
+  logFilterChipTextActive: {
+    color: AppColors.textInverse,
+  },
   grid: {
     gap: AppSpacing.lg,
+    marginBottom: AppSpacing.section,
   },
   card: {
     backgroundColor: AppColors.surface,
@@ -165,6 +230,48 @@ export const styles = StyleSheet.create({
   cardDetail: {
     ...textPrimitives.body,
     color: '#5D635D',
+  },
+  logCard: {
+    backgroundColor: AppColors.surface,
+    borderRadius: AppRadii.xxl,
+    padding: AppSpacing.section,
+    gap: AppSpacing.lg,
+  },
+  logItem: {
+    ...layoutPrimitives.centerRow,
+    alignItems: 'flex-start',
+    gap: AppSpacing.md,
+  },
+  logDot: {
+    width: 10,
+    height: 10,
+    borderRadius: AppRadii.full,
+    marginTop: 4,
+  },
+  logContent: {
+    flex: 1,
+  },
+  logTopRow: {
+    ...layoutPrimitives.headerRow,
+    alignItems: 'flex-start',
+    gap: AppSpacing.md,
+  },
+  logMessage: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: AppColors.text,
+    fontWeight: '600',
+  },
+  logTime: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: AppColors.textSubtle,
+  },
+  logEmptyText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: AppColors.textMuted,
   },
   bottomSpacer: layoutPrimitives.bottomSpacer,
 });

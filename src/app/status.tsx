@@ -1,39 +1,24 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { hasMqttConnectionSettings } from '@/lib/mqtt-settings';
-import { useMqtt, type MqttConnectionState } from '@/providers/mqtt-provider';
+import { useMqtt, type MqttConnectionState, type MqttLogLevel } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { styles } from '@/styles/screens/status.styles';
 
-const STATUS_CARDS = [
-  {
-    title: 'Battery Health',
-    value: 'Good',
-    detail: '92% capacity retained',
-    iconFamily: 'feather',
-    iconName: 'battery-charging',
-    accent: AppColors.success,
-  },
-  {
-    title: 'Motor Output',
-    value: 'Normal',
-    detail: 'No active warnings',
-    iconFamily: 'material',
-    iconName: 'speedometer',
-    accent: AppColors.primary,
-  },
-  {
-    title: 'Connectivity',
-    value: 'Ready',
-    detail: 'Broker session available from this panel',
-    iconFamily: 'feather',
-    iconName: 'wifi',
-    accent: '#3B82F6',
-  },
-] as const;
+type StatusOverviewCard = {
+  title: string;
+  value: string;
+  detail: string;
+  iconFamily: 'feather' | 'material';
+  iconName: string;
+  accent: string;
+};
+
+type LogFilter = 'all' | MqttLogLevel;
 
 const MQTT_STATUS_META: Record<
   MqttConnectionState,
@@ -66,18 +51,87 @@ const MQTT_STATUS_META: Record<
   },
 };
 
+const LOG_FILTERS: { label: string; value: LogFilter }[] = [
+  { label: 'All', value: 'all' },
+  { label: 'Info', value: 'info' },
+  { label: 'Success', value: 'success' },
+  { label: 'Warning', value: 'warning' },
+  { label: 'Error', value: 'error' },
+] as const;
+
+function getTransportLabel(endpointLabel: string) {
+  if (endpointLabel.startsWith('wss://')) {
+    return 'WSS';
+  }
+
+  if (endpointLabel.startsWith('ws://')) {
+    return 'WS';
+  }
+
+  return 'MQTT';
+}
+
+function getLogAccent(level: MqttLogLevel) {
+  if (level === 'success') {
+    return AppColors.success;
+  }
+
+  if (level === 'warning') {
+    return AppColors.warning;
+  }
+
+  if (level === 'error') {
+    return AppColors.error;
+  }
+
+  return AppColors.primary;
+}
+
+function formatConnectedTimestamp(timestamp: number | null) {
+  if (!timestamp) {
+    return 'No session yet';
+  }
+
+  return new Date(timestamp).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatSessionDuration(connectedAt: number | null, nowTimestamp: number) {
+  if (!connectedAt) {
+    return '00:00:00';
+  }
+
+  const totalSeconds = Math.max(0, Math.floor((nowTimestamp - connectedAt) / 1000));
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+
+  return `${hours}:${minutes}:${seconds}`;
+}
+
 export default function StatusScreen() {
   const {
+    clearLogs,
     connect,
+    connectedAt,
     disconnect,
     endpointLabel,
     isSettingsLoading,
     lastError,
+    lastConnectedAt,
+    logs,
     refreshSettings,
     settings,
     status,
     statusMessage,
   } = useMqtt();
+  const [activeLogFilter, setActiveLogFilter] = useState<LogFilter>('all');
+  const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
 
   useFocusEffect(
     useCallback(() => {
@@ -85,17 +139,102 @@ export default function StatusScreen() {
     }, [refreshSettings])
   );
 
+  useEffect(() => {
+    if (!connectedAt) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      setNowTimestamp(Date.now());
+    }, 1000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [connectedAt]);
+
   const statusMeta = MQTT_STATUS_META[status];
   const hasSettings = hasMqttConnectionSettings(settings);
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
-  const actionLabel = !hasSettings
-    ? 'Save MQTT Settings First'
-    : isConnecting
-      ? 'Connecting...'
-      : isConnected
-        ? 'Disconnect MQTT'
-        : 'Connect MQTT';
+  const actionLabel = isConnecting
+    ? 'Connecting...'
+    : isConnected
+      ? 'Disconnect MQTT'
+      : 'Connect MQTT';
+
+  const overviewCards: StatusOverviewCard[] = useMemo(
+    () => [
+      {
+        title: 'Connection',
+        value: statusMeta.label,
+        detail: lastError ?? statusMessage,
+        iconFamily: 'feather',
+        iconName: 'radio',
+        accent: statusMeta.accent,
+      },
+      {
+        title: 'Broker',
+        value: hasSettings ? 'Configured' : 'Pending',
+        detail: isSettingsLoading ? 'Loading saved broker...' : endpointLabel,
+        iconFamily: 'material',
+        iconName: 'transmission-tower',
+        accent: AppColors.primary,
+      },
+      {
+        title: 'Last Connected',
+        value: lastConnectedAt ? 'Recorded' : 'Waiting',
+        detail: formatConnectedTimestamp(lastConnectedAt),
+        iconFamily: 'feather',
+        iconName: 'clock',
+        accent: AppColors.success,
+      },
+      {
+        title: 'Session Duration',
+        value: isConnected ? formatSessionDuration(connectedAt, nowTimestamp) : 'Offline',
+        detail: isConnected ? 'Active uptime' : 'No running session',
+        iconFamily: 'material',
+        iconName: 'timer-outline',
+        accent: '#3B82F6',
+      },
+      {
+        title: 'Client Session',
+        value: settings.clientId.trim() || 'Auto',
+        detail: settings.username.trim() || 'Anonymous session',
+        iconFamily: 'feather',
+        iconName: 'cpu',
+        accent: AppColors.success,
+      },
+      {
+        title: 'Transport',
+        value: hasSettings ? getTransportLabel(endpointLabel) : 'Standby',
+        detail: hasSettings ? 'WebSocket ready for broker link' : 'Fill MQTT settings first',
+        iconFamily: 'material',
+        iconName: 'connection',
+        accent: AppColors.primary,
+      },
+    ],
+    [
+      connectedAt,
+      endpointLabel,
+      hasSettings,
+      isConnected,
+      isSettingsLoading,
+      lastConnectedAt,
+      lastError,
+      nowTimestamp,
+      settings.clientId,
+      settings.username,
+      statusMessage,
+      statusMeta.accent,
+      statusMeta.label,
+    ]
+  );
+
+  const filteredLogs = useMemo(
+    () => logs.filter((log) => activeLogFilter === 'all' || log.level === activeLogFilter),
+    [activeLogFilter, logs]
+  );
 
   const handleConnectionAction = () => {
     if (isConnected) {
@@ -112,17 +251,15 @@ export default function StatusScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>System Status</Text>
           <View style={styles.headerBadge}>
-            <Feather name="activity" size={16} color={AppColors.success} />
-            <Text style={styles.headerBadgeText}>Live</Text>
+            <Feather name="activity" size={16} color={statusMeta.accent} />
+            <Text style={styles.headerBadgeText}>{statusMeta.label}</Text>
           </View>
         </View>
 
         <View style={styles.heroCard}>
-          <Text style={styles.heroLabel}>MQTT link</Text>
-          <Text style={styles.heroValue}>{statusMeta.label}</Text>
-          <Text style={styles.heroDetail}>
-            {lastError ?? statusMeta.detail}
-          </Text>
+          <Text style={styles.heroLabel}>MQTT Control</Text>
+          <Text style={styles.heroValue}>Broker Session</Text>
+          <Text style={styles.heroDetail}>{lastError ?? statusMeta.detail}</Text>
         </View>
 
         <View style={styles.mqttCard}>
@@ -138,57 +275,98 @@ export default function StatusScreen() {
             </View>
           </View>
 
-          <Text style={styles.mqttTitle}>Broker Session</Text>
+          <Text style={styles.mqttTitle}>Connect MQTT Broker</Text>
           <Text style={styles.mqttEndpoint}>
             {isSettingsLoading ? 'Loading saved MQTT settings...' : endpointLabel}
           </Text>
           <Text style={styles.mqttDetail}>{statusMessage}</Text>
 
-          <View style={styles.mqttMetaRow}>
-            <View style={styles.mqttMetaCard}>
-              <Text style={styles.mqttMetaLabel}>Client ID</Text>
-              <Text style={styles.mqttMetaValue}>
-                {settings.clientId.trim() || 'Auto-generated on connect'}
-              </Text>
-            </View>
-            <View style={styles.mqttMetaCard}>
-              <Text style={styles.mqttMetaLabel}>Username</Text>
-              <Text style={styles.mqttMetaValue}>
-                {settings.username.trim() || 'Anonymous'}
-              </Text>
-            </View>
-          </View>
-
           <Pressable
-            disabled={isSettingsLoading || isConnecting || !hasSettings}
+            disabled={isSettingsLoading || isConnecting}
             onPress={handleConnectionAction}
             style={({ pressed }) => [
               styles.mqttActionButton,
               isConnected && styles.mqttActionButtonDisconnect,
               (pressed || isConnecting) && styles.mqttActionButtonPressed,
-              (isSettingsLoading || isConnecting || !hasSettings) && styles.mqttActionButtonDisabled,
+              (isSettingsLoading || isConnecting) && styles.mqttActionButtonDisabled,
             ]}>
             <Text style={styles.mqttActionButtonText}>{actionLabel}</Text>
           </Pressable>
+
+          {!hasSettings && !isConnected ? (
+            <Text style={styles.mqttInlineHint}>
+              Isi broker di Settings dulu, lalu tekan Connect dari panel ini.
+            </Text>
+          ) : null}
         </View>
 
+        <Text style={[styles.sectionLabel, styles.sectionLabelStandalone]}>MQTT Overview</Text>
         <View style={styles.grid}>
-          {STATUS_CARDS.map((card) => {
-            return (
-              <View key={card.title} style={styles.card}>
-                <View style={[styles.iconWrap, { backgroundColor: `${card.accent}18` }]}>
-                  {card.iconFamily === 'feather' ? (
-                    <Feather name={card.iconName as any} size={18} color={card.accent} />
-                  ) : (
-                    <MaterialCommunityIcons name={card.iconName as any} size={18} color={card.accent} />
-                  )}
-                </View>
-                <Text style={styles.cardTitle}>{card.title}</Text>
-                <Text style={styles.cardValue}>{card.value}</Text>
-                <Text style={styles.cardDetail}>{card.detail}</Text>
+          {overviewCards.map((card) => (
+            <View key={card.title} style={styles.card}>
+              <View style={[styles.iconWrap, { backgroundColor: `${card.accent}18` }]}>
+                {card.iconFamily === 'feather' ? (
+                  <Feather name={card.iconName as any} size={18} color={card.accent} />
+                ) : (
+                  <MaterialCommunityIcons name={card.iconName as any} size={18} color={card.accent} />
+                )}
               </View>
+              <Text style={styles.cardTitle}>{card.title}</Text>
+              <Text style={styles.cardValue}>{card.value}</Text>
+              <Text style={styles.cardDetail}>{card.detail}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionLabel}>Connection Log</Text>
+          <Pressable onPress={clearLogs} style={({ pressed }) => [styles.clearLogButton, pressed && styles.clearLogButtonPressed]}>
+            <Text style={styles.clearLogButtonText}>Clear Log</Text>
+          </Pressable>
+        </View>
+        <View style={styles.logFilterRow}>
+          {LOG_FILTERS.map((filter) => {
+            const isActive = filter.value === activeLogFilter;
+
+            return (
+              <Pressable
+                key={filter.value}
+                onPress={() => setActiveLogFilter(filter.value)}
+                style={[
+                  styles.logFilterChip,
+                  isActive && styles.logFilterChipActive,
+                ]}>
+                <Text
+                  style={[
+                    styles.logFilterChipText,
+                    isActive && styles.logFilterChipTextActive,
+                  ]}>
+                  {filter.label}
+                </Text>
+              </Pressable>
             );
           })}
+        </View>
+        <View style={styles.logCard}>
+          {filteredLogs.length === 0 ? (
+            <Text style={styles.logEmptyText}>No MQTT events yet.</Text>
+          ) : (
+            filteredLogs.map((log) => {
+              const accent = getLogAccent(log.level);
+
+              return (
+                <View key={log.id} style={styles.logItem}>
+                  <View style={[styles.logDot, { backgroundColor: accent }]} />
+                  <View style={styles.logContent}>
+                    <View style={styles.logTopRow}>
+                      <Text style={styles.logMessage}>{log.message}</Text>
+                      <Text style={styles.logTime}>{log.timestamp}</Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })
+          )}
         </View>
 
         <View style={styles.bottomSpacer} />

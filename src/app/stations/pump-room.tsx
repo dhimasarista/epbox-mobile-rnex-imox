@@ -1,25 +1,26 @@
 import { Slider } from '@expo/ui/community/slider';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   DEFAULT_PUMP_ROOM_PLC_INPUTS,
   getStoredPumpRoomPlcInputs,
   PUMP_ROOM_PLC_FIELDS,
+  setStoredPumpRoomPlcInputs,
   type PumpRoomPlcInputKey,
   type PumpRoomPlcInputs,
 } from '@/lib/pump-room-demo';
 import { AppColors } from '@/styles';
-import { styles } from '@/styles/screens/station.styles';
+import { getSignalPalette, styles, type SignalTone } from '@/styles/screens/station.styles';
 
 // Sensor field constants keep all UI limits and steps in one place.
 const PRESSURE_MIN_BAR = 0;
+const PRESSURE_WARNING_BAR = 7.5;
 const PRESSURE_DANGER_BAR = 10.2;
 const PRESSURE_SLIDER_MAX_BAR = 16;
-const PRESSURE_FIELD_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 const FLOW_RATE_FIELD_KEY: PumpRoomPlcInputKey = 'dischargeFlowRate';
 const FLOW_RATE_MIN_M3H = 0;
 const FLOW_RATE_STEP_M3H = 1;
@@ -126,6 +127,30 @@ function formatDashboardPressureValue(value: number) {
   return clampPressureValue(value).toFixed(1);
 }
 
+function getPressureSignalTone(value: number): SignalTone {
+  if (value >= PRESSURE_DANGER_BAR) {
+    return 'danger';
+  }
+
+  if (value >= PRESSURE_WARNING_BAR) {
+    return 'warning';
+  }
+
+  return 'normal';
+}
+
+function getPressureSignalLabel(tone: SignalTone) {
+  if (tone === 'danger') {
+    return `Danger >= ${PRESSURE_DANGER_BAR.toFixed(1)} bar`;
+  }
+
+  if (tone === 'warning') {
+    return `Watch >= ${PRESSURE_WARNING_BAR.toFixed(1)} bar`;
+  }
+
+  return 'Normal range';
+}
+
 function createDashboardInputsFromPlcInputs(inputs: PumpRoomPlcInputs): PumpRoomDashboardInputs {
   return {
     ...DEFAULT_DASHBOARD_INPUTS,
@@ -157,18 +182,44 @@ function PumpRoomHero() {
       <View style={styles.heroTopRow}>
         <View style={styles.heroBadge}>
           <MaterialCommunityIcons name="fire-hydrant" size={14} color={AppColors.primary} />
-          <Text style={styles.heroBadgeText}>Pump Room Active</Text>
+          <Text style={styles.heroBadgeText}>Pump Room</Text>
         </View>
         <View style={styles.liveChip}>
           <View style={[styles.liveDot, styles.plcDot]} />
-          <Text style={styles.liveChipText}>Calibration Source</Text>
+          <Text style={styles.liveChipText}>Active</Text>
         </View>
       </View>
-
-      <Text style={styles.heroTitle}>Operational Parameters</Text>
       <Text style={styles.heroSubtitle}>
-        Calibrate pump pressure and discharge flow for live monitoring.
+        Please calibrate the sensors and actuators to match reference parameters.
       </Text>
+    </View>
+  );
+}
+
+function EngineeringSignalBands({ tone }: { tone: SignalTone }) {
+  return (
+    <View style={styles.signalBandsRow}>
+      <View
+        style={[
+          styles.signalBand,
+          styles.signalBandNormal,
+          tone === 'normal' && styles.signalBandActive,
+        ]}
+      />
+      <View
+        style={[
+          styles.signalBand,
+          styles.signalBandWarning,
+          tone === 'warning' && styles.signalBandActive,
+        ]}
+      />
+      <View
+        style={[
+          styles.signalBand,
+          styles.signalBandDanger,
+          tone === 'danger' && styles.signalBandActive,
+        ]}
+      />
     </View>
   );
 }
@@ -184,46 +235,75 @@ function PressureTransmitterField({
   onChange: FieldUpdater;
 }) {
   const pressureValue = parsePressureValue(value);
-  const isDangerPressure = pressureValue >= PRESSURE_DANGER_BAR;
+  const signalTone = getPressureSignalTone(pressureValue);
+  const signalPalette = getSignalPalette(signalTone);
 
   return (
     <View style={styles.fieldBlock}>
       <View style={styles.fieldHeaderRow}>
         <Text style={styles.fieldLabel}>{field.label}</Text>
-        <Text
+        <View
           style={[
-            styles.pressureValue,
-            isDangerPressure && styles.pressureValueDanger,
+            styles.signalValueChip,
+            {
+              backgroundColor: signalPalette.surface,
+              borderColor: signalPalette.border,
+            },
           ]}>
-          {formatPressureValue(pressureValue)}
-        </Text>
+          <View
+            style={[
+              styles.signalValueDot,
+              { backgroundColor: signalPalette.accent },
+            ]}
+          />
+          <Text
+            style={[
+              styles.signalValueText,
+              { color: signalPalette.text },
+            ]}>
+            {formatPressureValue(pressureValue)}
+          </Text>
+        </View>
       </View>
 
-      <Slider
-        value={pressureValue}
-        minimumValue={PRESSURE_MIN_BAR}
-        maximumValue={PRESSURE_SLIDER_MAX_BAR}
-        step={0.1}
-        minimumTrackTintColor={isDangerPressure ? AppColors.error : AppColors.primary}
-        maximumTrackTintColor={AppColors.border}
-        thumbTintColor={isDangerPressure ? AppColors.error : AppColors.primary}
-        onValueChange={(nextValue) => onChange(field.key, formatPressureValue(nextValue))}
-        style={styles.pressureSlider}
-      />
+      <View
+        style={[
+          styles.signalSliderShell,
+          signalTone === 'normal' && styles.signalSliderShellNormal,
+          signalTone === 'warning' && styles.signalSliderShellWarning,
+          signalTone === 'danger' && styles.signalSliderShellDanger,
+        ]}>
+        <Slider
+          value={pressureValue}
+          minimumValue={PRESSURE_MIN_BAR}
+          maximumValue={PRESSURE_SLIDER_MAX_BAR}
+          step={0.1}
+          minimumTrackTintColor={signalPalette.accent}
+          maximumTrackTintColor={signalPalette.track}
+          thumbTintColor={signalPalette.accent}
+          onValueChange={(nextValue) => onChange(field.key, formatPressureValue(nextValue))}
+          style={styles.pressureSlider}
+        />
+
+        <EngineeringSignalBands tone={signalTone} />
+      </View>
 
       <View style={styles.sliderRangeRow}>
         <Text style={styles.sliderRangeText}>0 bar</Text>
         <View
           style={[
-            styles.pressureLimitBadge,
-            isDangerPressure && styles.pressureLimitBadgeDanger,
+            styles.signalStateBadge,
+            {
+              backgroundColor: signalPalette.surface,
+              borderColor: signalPalette.border,
+            },
           ]}>
           <Text
             style={[
-              styles.pressureLimitText,
-              isDangerPressure && styles.pressureLimitTextDanger,
+              styles.signalStateText,
+              { color: signalPalette.text },
             ]}>
-            {'Danger >= 10.2 bar'}
+            {getPressureSignalLabel(signalTone)}
           </Text>
         </View>
         <Text style={styles.sliderRangeText}>16 bar</Text>
@@ -236,20 +316,14 @@ function PressureTransmitterField({
 function FlowRateField({
   field,
   value,
-  onChange,
   onStep,
 }: {
   field: PumpRoomField;
   value: string;
-  onChange: FieldUpdater;
   onStep: FlowRateStepper;
 }) {
   const flowRateValue = parseFlowRateValue(value);
   const isMinimumFlowRate = flowRateValue <= FLOW_RATE_MIN_M3H;
-
-  const updateFlowRate = (nextValue: number) => {
-    onChange(field.key, formatFlowRateValue(nextValue));
-  };
 
   return (
     <View style={styles.fieldBlock}>
@@ -261,36 +335,10 @@ function FlowRateField({
           chipText={`${flowRateValue} m3/h`}
           chipTone={flowRateValue > 0 ? 'stable' : 'default'}
           hint="Discharge reference for calibration channel."
-          onChangeText={(nextValue) => updateFlowRate(parseFlowRateValue(nextValue))}
           onStep={(delta) => onStep(delta * FLOW_RATE_STEP_M3H)}
           isMinimumDisabled={isMinimumFlowRate}
         />
       </View>
-    </View>
-  );
-}
-
-// Standard input fields are kept for any future calibration values.
-function TextCalibrationField({
-  field,
-  value,
-  onChange,
-}: {
-  field: PumpRoomField;
-  value: string;
-  onChange: FieldUpdater;
-}) {
-  return (
-    <View style={styles.fieldBlock}>
-      <Text style={styles.fieldLabel}>{field.label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={(nextValue) => onChange(field.key, nextValue)}
-        placeholder={field.placeholder}
-        placeholderTextColor="#9AA09A"
-        style={styles.input}
-        keyboardType="numeric"
-      />
     </View>
   );
 }
@@ -307,43 +355,20 @@ function SensorCalibrationSection({
 }) {
   return (
     <View style={styles.sectionCard}>
-      <View style={styles.sectionHeaderRow}>
-        <Text style={styles.sectionTitle}>Sensor Calibration</Text>
-        <View style={styles.sectionBadge}>
-          <View style={[styles.inlineDot, styles.plcDot]} />
-        </View>
-      </View>
-
-      <Text style={styles.sectionDescription}>
-        Adjust pressure transmitter and discharge flow references.
-      </Text>
-
       {PUMP_ROOM_PLC_FIELDS.map((field) => {
-        if (PRESSURE_FIELD_KEYS.includes(field.key)) {
-          return (
-            <PressureTransmitterField
-              key={field.key}
-              field={field}
-              value={form[field.key]}
-              onChange={onChange}
-            />
-          );
-        }
-
         if (field.key === FLOW_RATE_FIELD_KEY) {
           return (
             <FlowRateField
               key={field.key}
               field={field}
               value={form[field.key]}
-              onChange={onChange}
               onStep={onFlowRateStep}
             />
           );
         }
 
         return (
-          <TextCalibrationField
+          <PressureTransmitterField
             key={field.key}
             field={field}
             value={form[field.key]}
@@ -380,23 +405,6 @@ function DashboardAlarmField({
             styles.alarmToggle,
             value ? styles.alarmToggleActive : styles.alarmToggleInactive,
           ]}>
-          <View style={styles.alarmToggleTrack}>
-            <Text
-              style={[
-                styles.alarmToggleLabel,
-                !value && styles.alarmToggleLabelActive,
-              ]}>
-              
-            </Text>
-            <Text
-              style={[
-                styles.alarmToggleLabel,
-                value && styles.alarmToggleLabelActive,
-              ]}>
-              {/* ALARM */}
-            </Text>
-          </View>
-
           <View
             style={[
               styles.alarmToggleThumb,
@@ -548,7 +556,6 @@ function PanelStepperField({
   chipText,
   chipTone = 'default',
   hint,
-  onChangeText,
   onStep,
   isMinimumDisabled,
   isMaximumDisabled = false,
@@ -559,7 +566,6 @@ function PanelStepperField({
   chipText: string;
   chipTone?: StepperChipTone;
   hint?: string;
-  onChangeText: (value: string) => void;
   onStep: (delta: number) => void;
   isMinimumDisabled: boolean;
   isMaximumDisabled?: boolean;
@@ -601,14 +607,7 @@ function PanelStepperField({
         </TouchableOpacity>
 
         <View style={styles.dashboardReadoutShell}>
-          <TextInput
-            value={value}
-            onChangeText={onChangeText}
-            placeholder="0"
-            placeholderTextColor="#9AA09A"
-            style={styles.dashboardReadoutInput}
-            keyboardType="number-pad"
-          />
+          <Text style={styles.dashboardReadoutValue}>{value}</Text>
           <Text style={styles.dashboardReadoutUnit}>{unit}</Text>
         </View>
 
@@ -640,6 +639,7 @@ function DashboardAmpereField({
   onChange: (value: string) => void;
 }) {
   const ampereValue = parseAmpereValue(value);
+  const isCriticalAmpere = ampereValue >= 140;
   const isHighAmpere = ampereValue >= 100;
   const isMinimumAmpere = ampereValue <= AMPERE_MIN_A;
   const isMaximumAmpere = ampereValue >= AMPERE_MAX_A;
@@ -652,9 +652,8 @@ function DashboardAmpereField({
           value={String(ampereValue)}
           unit="A"
           chipText={`${ampereValue} A`}
-          chipTone={isHighAmpere ? 'warning' : 'default'}
+          chipTone={isCriticalAmpere ? 'danger' : isHighAmpere ? 'warning' : 'default'}
           hint="Current draw reference for dashboard panel."
-          onChangeText={(nextValue) => onChange(formatAmpereValue(parseAmpereValue(nextValue)))}
           onStep={(delta) => onChange(formatAmpereValue(ampereValue + delta * AMPERE_STEP_A))}
           isMinimumDisabled={isMinimumAmpere}
           isMaximumDisabled={isMaximumAmpere}
@@ -674,7 +673,8 @@ function DashboardPressureField({
   onChange: (value: string) => void;
 }) {
   const pressureValue = parsePressureValue(value);
-  const isDangerPressure = pressureValue >= PRESSURE_DANGER_BAR;
+  const signalTone = getPressureSignalTone(pressureValue);
+  const signalPalette = getSignalPalette(signalTone);
 
   return (
     <View style={styles.dashboardFieldBlock}>
@@ -683,46 +683,66 @@ function DashboardPressureField({
           <Text style={styles.fieldLabel}>{label}</Text>
           <View
             style={[
-              styles.dashboardValueChip,
-              isDangerPressure && styles.dashboardValueChipDanger,
+              styles.signalValueChip,
+              {
+                backgroundColor: signalPalette.surface,
+                borderColor: signalPalette.border,
+              },
             ]}>
+            <View
+              style={[
+                styles.signalValueDot,
+                { backgroundColor: signalPalette.accent },
+              ]}
+            />
             <Text
               style={[
-                styles.dashboardValueChipText,
-                isDangerPressure && styles.dashboardValueChipTextDanger,
+                styles.signalValueText,
+                { color: signalPalette.text },
               ]}>
               {pressureValue.toFixed(1)} bar
             </Text>
           </View>
         </View>
 
-        <Slider
-          value={pressureValue}
-          minimumValue={PRESSURE_MIN_BAR}
-          maximumValue={PRESSURE_SLIDER_MAX_BAR}
-          step={0.1}
-          minimumTrackTintColor={isDangerPressure ? AppColors.error : AppColors.primary}
-          maximumTrackTintColor={AppColors.border}
-          thumbTintColor={isDangerPressure ? AppColors.error : AppColors.primary}
-          onValueChange={(nextValue) => onChange(formatDashboardPressureValue(nextValue))}
-          style={styles.dashboardPressureSlider}
-        />
+        <View
+          style={[
+            styles.signalSliderShell,
+            signalTone === 'normal' && styles.signalSliderShellNormal,
+            signalTone === 'warning' && styles.signalSliderShellWarning,
+            signalTone === 'danger' && styles.signalSliderShellDanger,
+          ]}>
+          <Slider
+            value={pressureValue}
+            minimumValue={PRESSURE_MIN_BAR}
+            maximumValue={PRESSURE_SLIDER_MAX_BAR}
+            step={0.1}
+            minimumTrackTintColor={signalPalette.accent}
+            maximumTrackTintColor={signalPalette.track}
+            thumbTintColor={signalPalette.accent}
+            onValueChange={(nextValue) => onChange(formatDashboardPressureValue(nextValue))}
+            style={styles.dashboardPressureSlider}
+          />
+
+          <EngineeringSignalBands tone={signalTone} />
+        </View>
 
         <View style={styles.sliderRangeRow}>
           <Text style={styles.sliderRangeText}>0 bar</Text>
           <View
             style={[
-              styles.dashboardValueChip,
-              isDangerPressure ? styles.dashboardValueChipDanger : styles.dashboardValueChipStable,
+              styles.signalStateBadge,
+              {
+                backgroundColor: signalPalette.surface,
+                borderColor: signalPalette.border,
+              },
             ]}>
             <Text
               style={[
-                styles.dashboardValueChipText,
-                isDangerPressure
-                  ? styles.dashboardValueChipTextDanger
-                  : styles.dashboardValueChipTextStable,
+                styles.signalStateText,
+                { color: signalPalette.text },
               ]}>
-              {isDangerPressure ? 'High Load' : 'Stable'}
+              {getPressureSignalLabel(signalTone)}
             </Text>
           </View>
           <Text style={styles.sliderRangeText}>16 bar</Text>
@@ -735,11 +755,9 @@ function DashboardPressureField({
 // Dashboard flow discharge input uses the same number-stepper pattern as calibration flow.
 function DashboardFlowRateField({
   value,
-  onChange,
   onStep,
 }: {
   value: string;
-  onChange: (value: string) => void;
   onStep: FlowRateStepper;
 }) {
   const flowRateValue = parseFlowRateValue(value);
@@ -755,7 +773,6 @@ function DashboardFlowRateField({
           chipText={`${flowRateValue} m3/h`}
           chipTone={flowRateValue > 0 ? 'stable' : 'default'}
           hint="Discharge volume shown in dashboard panel."
-          onChangeText={(nextValue) => onChange(String(parseFlowRateValue(nextValue)))}
           onStep={(delta) => onStep(delta * FLOW_RATE_STEP_M3H)}
           isMinimumDisabled={isMinimumFlowRate}
         />
@@ -779,17 +796,6 @@ function DashboardInputSection({
 }) {
   return (
     <View style={styles.summaryCard}>
-      <View style={styles.sectionHeaderRow}>
-        <Text style={styles.summaryTitle}>Live Dashboard View</Text>
-        {/* <View style={styles.sectionBadge}>
-          <View style={[styles.inlineDot, styles.dashboardDot]} />
-        </View> */}
-      </View>
-
-      <Text style={styles.sectionDescription}>
-        Operational status values shown on the dashboard display.
-      </Text>
-
       <DashboardAlarmField
         value={dashboardForm.temperatureAlarm}
         onChange={(nextValue) => onChange('temperatureAlarm', nextValue)}
@@ -814,7 +820,6 @@ function DashboardInputSection({
       />
       <DashboardFlowRateField
         value={dashboardForm.dischargeFlowRate}
-        onChange={(nextValue) => onChange('dischargeFlowRate', nextValue)}
         onStep={onFlowRateStep}
       />
     </View>
@@ -825,6 +830,7 @@ function DashboardInputSection({
 export default function PumpRoom() {
   const [form, setForm] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
   const [dashboardForm, setDashboardForm] = useState(DEFAULT_DASHBOARD_INPUTS);
+  const hasHydratedRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -835,6 +841,7 @@ export default function PumpRoom() {
       if (isMounted) {
         setForm(stored);
         setDashboardForm(createDashboardInputsFromPlcInputs(stored));
+        hasHydratedRef.current = true;
       }
     }
 
@@ -844,6 +851,14 @@ export default function PumpRoom() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!hasHydratedRef.current) {
+      return;
+    }
+
+    void setStoredPumpRoomPlcInputs(form);
+  }, [form]);
 
   const updateField = (key: PumpRoomPlcInputKey, value: string) => {
     setForm((current) => ({
