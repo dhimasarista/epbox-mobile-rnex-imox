@@ -1,9 +1,7 @@
 import { Feather } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
 import { useEffect, useState } from 'react';
 import {
   Alert,
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -11,29 +9,19 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  DEFAULT_MQTT_CONNECTION_SETTINGS,
+  getStoredMqttSettingsValue,
+  type MqttConnectionSettings,
+  setStoredMqttSettings,
+} from '@/lib/mqtt-settings';
+import { useMqtt } from '@/providers/mqtt-provider';
 import { useAuth } from '@/providers/auth-provider';
 import { AppColors } from '@/styles';
 import { styles } from '@/styles/screens/settings.styles';
-const STORAGE_KEY = 'epbox.connection.settings';
-
-type ConnectionSettings = {
-  serverAddress: string;
-  port: string;
-  clientId: string;
-  username: string;
-  password: string;
-};
-
-const DEFAULT_SETTINGS: ConnectionSettings = {
-  serverAddress: '',
-  port: '',
-  clientId: '',
-  username: '',
-  password: '',
-};
 
 const FORM_FIELDS: {
-  key: keyof ConnectionSettings;
+  key: keyof MqttConnectionSettings;
   label: string;
   placeholder: string;
   secureTextEntry?: boolean;
@@ -41,13 +29,13 @@ const FORM_FIELDS: {
 }[] = [
   {
     key: 'serverAddress',
-    label: 'Server Address',
-    placeholder: 'broker.example.local',
+    label: 'Broker Host / URL',
+    placeholder: 'wss://broker.example.local/mqtt',
   },
   {
     key: 'port',
     label: 'Port',
-    placeholder: '1883',
+    placeholder: '8084',
     keyboardType: 'numeric',
   },
   {
@@ -68,42 +56,26 @@ const FORM_FIELDS: {
   },
 ];
 
-async function getStoredSettings() {
-  if (Platform.OS === 'web') {
-    return globalThis.localStorage?.getItem(STORAGE_KEY) ?? null;
-  }
-
-  return SecureStore.getItemAsync(STORAGE_KEY);
-}
-
-async function setStoredSettings(value: string) {
-  if (Platform.OS === 'web') {
-    globalThis.localStorage?.setItem(STORAGE_KEY, value);
-    return;
-  }
-
-  await SecureStore.setItemAsync(STORAGE_KEY, value);
-}
-
 export default function SettingsScreen() {
   const { signOut } = useAuth();
-  const [form, setForm] = useState(DEFAULT_SETTINGS);
+  const { refreshSettings } = useMqtt();
+  const [form, setForm] = useState(DEFAULT_MQTT_CONNECTION_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('Configuration is saved per device.');
+  const [statusMessage, setStatusMessage] = useState('MQTT configuration is saved per device.');
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadSettings() {
       try {
-        const storedValue = await getStoredSettings();
+        const storedValue = await getStoredMqttSettingsValue();
 
         if (!storedValue || !isMounted) {
           return;
         }
 
-        const parsed = JSON.parse(storedValue) as Partial<ConnectionSettings>;
+        const parsed = JSON.parse(storedValue) as Partial<MqttConnectionSettings>;
 
         setForm({
           serverAddress: parsed.serverAddress ?? '',
@@ -131,7 +103,7 @@ export default function SettingsScreen() {
     };
   }, []);
 
-  const updateField = (key: keyof ConnectionSettings, value: string) => {
+  const updateField = (key: keyof MqttConnectionSettings, value: string) => {
     setForm((current) => ({
       ...current,
       [key]: value,
@@ -141,9 +113,10 @@ export default function SettingsScreen() {
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      await setStoredSettings(JSON.stringify(form));
-      setStatusMessage('Configuration saved successfully on this device.');
-      Alert.alert('Saved', 'Connection settings have been stored locally on this device.');
+      await setStoredMqttSettings(form);
+      await refreshSettings();
+      setStatusMessage('MQTT configuration saved successfully on this device.');
+      Alert.alert('Saved', 'MQTT connection settings have been stored locally on this device.');
     } catch {
       Alert.alert('Save failed', 'The configuration could not be stored. Please try again.');
     } finally {
@@ -164,7 +137,7 @@ export default function SettingsScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Settings</Text>
-            <Text style={styles.subtitle}>Configure this device without bundling secrets in the app.</Text>
+            <Text style={styles.subtitle}>Configure MQTT access without bundling secrets in the app.</Text>
           </View>
           <View style={styles.headerIcon}>
             <Feather name="settings" size={18} color={AppColors.text} />
@@ -175,11 +148,11 @@ export default function SettingsScreen() {
           <View style={styles.formCardHeader}>
             <View style={styles.formBadge}>
               <Feather name="shield" size={15} color={AppColors.success} />
-              <Text style={styles.formBadgeText}>Device Configuration</Text>
+              <Text style={styles.formBadgeText}>MQTT Configuration</Text>
             </View>
-            <Text style={styles.formTitle}>Connection Setup</Text>
+            <Text style={styles.formTitle}>Broker Setup</Text>
             <Text style={styles.formDescription}>
-              Each installation can use its own endpoint details while keeping the app package reusable.
+              Save the broker endpoint used by this device. Use a WebSocket MQTT endpoint for Expo.
             </Text>
           </View>
 
@@ -203,7 +176,9 @@ export default function SettingsScreen() {
 
           <View style={styles.statusCard}>
             <Feather name="hard-drive" size={16} color={AppColors.text} />
-            <Text style={styles.statusText}>{isLoading ? 'Loading saved configuration...' : statusMessage}</Text>
+            <Text style={styles.statusText}>
+              {isLoading ? 'Loading saved MQTT configuration...' : statusMessage}
+            </Text>
           </View>
 
           <Pressable
@@ -214,7 +189,7 @@ export default function SettingsScreen() {
               (pressed || isSaving) && styles.saveButtonPressed,
               (isLoading || isSaving) && styles.saveButtonDisabled,
             ]}>
-            <Text style={styles.saveButtonText}>{isSaving ? 'Saving...' : 'Save Configuration'}</Text>
+            <Text style={styles.saveButtonText}>{isSaving ? 'Saving...' : 'Save MQTT Configuration'}</Text>
           </Pressable>
         </View>
 

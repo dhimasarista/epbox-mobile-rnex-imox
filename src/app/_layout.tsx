@@ -5,6 +5,7 @@ import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import LoginScreen from '@/components/login-screen';
 import { useAuth, AuthProvider } from '@/providers/auth-provider';
+import { MqttProvider } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 
 function RootContent() {
@@ -25,10 +26,10 @@ function RootContent() {
           <ActivityIndicator size="large" color={AppColors.primary} />
         </View>
       ) : isAuthenticated ? (
-        <>
+        <MqttProvider>
           <AnimatedSplashOverlay />
           <AppTabs />
-        </>
+        </MqttProvider>
       ) : (
         <LoginScreen />
       )}
