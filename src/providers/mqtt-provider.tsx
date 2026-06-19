@@ -15,6 +15,8 @@ import {
   DEFAULT_MQTT_CONNECTION_SETTINGS,
   getMqttClientId,
   getMqttEndpointLabel,
+  getMqttRuntimeTransport,
+  getMqttRuntimeTransportLabel,
   getStoredMqttSettings,
   hasMqttConnectionSettings,
   type MqttConnectionSettings,
@@ -153,7 +155,8 @@ export function MqttProvider({ children }: PropsWithChildren) {
 
       disposeClient();
 
-      const brokerUrl = buildMqttBrokerUrl(latestSettings);
+      const runtimeTransport = getMqttRuntimeTransport();
+      const brokerUrl = buildMqttBrokerUrl(latestSettings, runtimeTransport);
       const options: IClientOptions = {
         clean: true,
         clientId: getMqttClientId(latestSettings),
@@ -167,8 +170,11 @@ export function MqttProvider({ children }: PropsWithChildren) {
 
       setLastError(null);
       setStatus('connecting');
-      setStatusMessage(`Connecting to ${brokerUrl}`);
-      appendLog('info', `Connecting to ${brokerUrl}`);
+      setStatusMessage(`Connecting via ${getMqttRuntimeTransportLabel(runtimeTransport)} to ${brokerUrl}`);
+      appendLog(
+        'info',
+        `Connecting via ${getMqttRuntimeTransportLabel(runtimeTransport)} to ${brokerUrl}`
+      );
 
       const client = mqtt.connect(brokerUrl, options);
       clientRef.current = client;

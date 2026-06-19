@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   DEFAULT_MQTT_CONNECTION_SETTINGS,
+  getMqttRuntimeTransportLabel,
   getStoredMqttSettingsValue,
   type MqttConnectionSettings,
   setStoredMqttSettings,
@@ -30,7 +31,7 @@ const FORM_FIELDS: {
   {
     key: 'serverAddress',
     label: 'Broker Host / URL',
-    placeholder: 'wss://broker.example.local/mqtt',
+    placeholder: 'broker.example.local or wss://broker.example.local/mqtt',
   },
   {
     key: 'port',
@@ -152,7 +153,7 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.formTitle}>Broker Setup</Text>
             <Text style={styles.formDescription}>
-              Save the broker endpoint used by this device. Use a WebSocket MQTT endpoint for Expo.
+              Save broker host or URL. Development uses {getMqttRuntimeTransportLabel('ws')} and standalone build switches to {getMqttRuntimeTransportLabel('tcp')} when no protocol is written.
             </Text>
           </View>
 

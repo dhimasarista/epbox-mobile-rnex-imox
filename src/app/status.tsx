@@ -4,7 +4,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { hasMqttConnectionSettings } from '@/lib/mqtt-settings';
+import {
+  getMqttRuntimeTransportDetail,
+  getMqttTransportLabel,
+  hasMqttConnectionSettings,
+} from '@/lib/mqtt-settings';
 import { useMqtt, type MqttConnectionState, type MqttLogLevel } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { styles } from '@/styles/screens/status.styles';
@@ -58,18 +62,6 @@ const LOG_FILTERS: { label: string; value: LogFilter }[] = [
   { label: 'Warning', value: 'warning' },
   { label: 'Error', value: 'error' },
 ] as const;
-
-function getTransportLabel(endpointLabel: string) {
-  if (endpointLabel.startsWith('wss://')) {
-    return 'WSS';
-  }
-
-  if (endpointLabel.startsWith('ws://')) {
-    return 'WS';
-  }
-
-  return 'MQTT';
-}
 
 function getLogAccent(level: MqttLogLevel) {
   if (level === 'success') {
@@ -207,8 +199,8 @@ export default function StatusScreen() {
       },
       {
         title: 'Transport',
-        value: hasSettings ? getTransportLabel(endpointLabel) : 'Standby',
-        detail: hasSettings ? 'WebSocket ready for broker link' : 'Fill MQTT settings first',
+        value: hasSettings ? getMqttTransportLabel(endpointLabel) : 'Standby',
+        detail: getMqttRuntimeTransportDetail(settings),
         iconFamily: 'material',
         iconName: 'connection',
         accent: AppColors.primary,
@@ -223,8 +215,7 @@ export default function StatusScreen() {
       lastConnectedAt,
       lastError,
       nowTimestamp,
-      settings.clientId,
-      settings.username,
+      settings,
       statusMessage,
       statusMeta.accent,
       statusMeta.label,

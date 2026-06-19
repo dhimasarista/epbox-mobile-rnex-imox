@@ -1,7 +1,9 @@
+import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
 export const MQTT_SETTINGS_STORAGE_KEY = 'epbox.connection.settings';
+export type MqttRuntimeTransport = 'ws' | 'tcp';
 
 export type MqttConnectionSettings = {
   serverAddress: string;
@@ -70,7 +72,45 @@ function getDefaultWebSocketProtocol(port: string) {
   return ['443', '8081', '8084', '8443', '8884'].includes(port) ? 'wss' : 'ws';
 }
 
-export function buildMqttBrokerUrl(settings: MqttConnectionSettings) {
+function getDefaultTcpProtocol(port: string) {
+  return ['443', '8883', '8884'].includes(port) ? 'mqtts' : 'mqtt';
+}
+
+export function getMqttRuntimeTransport(): MqttRuntimeTransport {
+  if (Platform.OS === 'web') {
+    return 'ws';
+  }
+
+  return Constants.executionEnvironment === 'standalone' ? 'tcp' : 'ws';
+}
+
+export function getMqttRuntimeTransportLabel(transport = getMqttRuntimeTransport()) {
+  return transport === 'tcp' ? 'TCP' : 'WS';
+}
+
+export function getMqttRuntimeTransportDetail(settings: MqttConnectionSettings) {
+  const runtimeTransport = getMqttRuntimeTransport();
+  const address = settings.serverAddress.trim();
+
+  if (!address) {
+    return 'Fill MQTT settings first';
+  }
+
+  if (address.includes('://')) {
+    return 'Explicit protocol from saved broker URL';
+  }
+
+  if (runtimeTransport === 'tcp') {
+    return 'Standalone native build uses MQTT TCP/TLS';
+  }
+
+  return 'Development runtime uses MQTT WebSocket';
+}
+
+export function buildMqttBrokerUrl(
+  settings: MqttConnectionSettings,
+  runtimeTransport = getMqttRuntimeTransport()
+) {
   const rawAddress = settings.serverAddress.trim();
   const rawPort = settings.port.trim();
 
@@ -80,7 +120,9 @@ export function buildMqttBrokerUrl(settings: MqttConnectionSettings) {
 
   const addressWithProtocol = rawAddress.includes('://')
     ? rawAddress
-    : `${getDefaultWebSocketProtocol(rawPort)}://${rawAddress}`;
+    : runtimeTransport === 'tcp'
+      ? `${getDefaultTcpProtocol(rawPort)}://${rawAddress}`
+      : `${getDefaultWebSocketProtocol(rawPort)}://${rawAddress}`;
 
   const url = new URL(addressWithProtocol);
 
@@ -88,23 +130,46 @@ export function buildMqttBrokerUrl(settings: MqttConnectionSettings) {
     url.port = rawPort;
   }
 
-  if (!url.pathname || url.pathname === '/') {
+  if ((url.protocol === 'ws:' || url.protocol === 'wss:') && (!url.pathname || url.pathname === '/')) {
     url.pathname = '/mqtt';
   }
 
   return url.toString();
 }
 
-export function getMqttEndpointLabel(settings: MqttConnectionSettings) {
+export function getMqttEndpointLabel(
+  settings: MqttConnectionSettings,
+  runtimeTransport = getMqttRuntimeTransport()
+) {
   if (!hasMqttConnectionSettings(settings)) {
     return 'Not configured';
   }
 
   try {
-    return buildMqttBrokerUrl(settings);
+    return buildMqttBrokerUrl(settings, runtimeTransport);
   } catch {
     return settings.serverAddress.trim();
   }
+}
+
+export function getMqttTransportLabel(endpointLabel: string) {
+  if (endpointLabel.startsWith('wss://')) {
+    return 'WSS';
+  }
+
+  if (endpointLabel.startsWith('ws://')) {
+    return 'WS';
+  }
+
+  if (endpointLabel.startsWith('mqtts://') || endpointLabel.startsWith('tls://')) {
+    return 'MQTTS';
+  }
+
+  if (endpointLabel.startsWith('mqtt://') || endpointLabel.startsWith('tcp://')) {
+    return 'MQTT';
+  }
+
+  return 'MQTT';
 }
 
 export function getMqttClientId(settings: MqttConnectionSettings) {
