@@ -31,7 +31,7 @@ const FORM_FIELDS: {
   {
     key: 'serverAddress',
     label: 'Broker Host / URL',
-    placeholder: 'broker.example.local or wss://broker.example.local/mqtt',
+    placeholder: 'ws://192.168.16.20:8084/mqtt or broker.example.local',
   },
   {
     key: 'port',
@@ -153,7 +153,7 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.formTitle}>Broker Setup</Text>
             <Text style={styles.formDescription}>
-              Save broker host or URL. Development uses {getMqttRuntimeTransportLabel('ws')} and standalone build switches to {getMqttRuntimeTransportLabel('tcp')} when no protocol is written.
+              Save broker host or URL. For Android preview, prefer the full {getMqttRuntimeTransportLabel('ws')} URL including path, for example `ws://host:port/mqtt`. Standalone build switches to {getMqttRuntimeTransportLabel('tcp')} when no protocol is written.
             </Text>
           </View>
 

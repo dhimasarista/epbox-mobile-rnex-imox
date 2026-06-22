@@ -47,6 +47,15 @@ export type MqttLogEntry = {
   timestamp: string;
 };
 
+export type MqttLatencySample = {
+  label: string;
+  requestTopicKey: MqttTopicKey;
+  responseTopicKey: MqttTopicKey;
+  startedAt: number;
+  completedAt: number;
+  durationMs: number;
+};
+
 export type MqttTopicMessage<TKey extends MqttTopicKey = MqttTopicKey> = {
   key: TKey;
   topic: string;
@@ -66,6 +75,14 @@ type PublishTopicFn = <TKey extends MqttTopicKey>(
 
 type GetTopicMessageFn = <TKey extends MqttTopicKey>(topicKey: TKey) => MqttTopicMessage<TKey> | null;
 
+type RecordLatencySampleInput = {
+  label: string;
+  requestTopicKey: MqttTopicKey;
+  responseTopicKey: MqttTopicKey;
+  startedAt: number;
+  completedAt?: number;
+};
+
 type MqttContextValue = {
   clearLogs: () => void;
   connect: () => Promise<void>;
@@ -76,8 +93,10 @@ type MqttContextValue = {
   isSettingsLoading: boolean;
   lastError: string | null;
   lastConnectedAt: number | null;
+  latestLatencySample: MqttLatencySample | null;
   logs: MqttLogEntry[];
   publishTopic: PublishTopicFn;
+  recordLatencySample: (sample: RecordLatencySampleInput) => void;
   refreshSettings: () => Promise<void>;
   settings: MqttConnectionSettings;
   status: MqttConnectionState;
@@ -111,6 +130,16 @@ function createTopicMessage<TKey extends MqttTopicKey>(
   };
 }
 
+function getFriendlyMqttErrorMessage(error: Error, brokerUrl: string) {
+  const errorMessage = error.message || 'Unable to connect to MQTT broker.';
+
+  if (errorMessage.includes('connack timeout')) {
+    return `MQTT connack timeout. Broker did not answer CONNECT on ${brokerUrl}. Check the exact WebSocket URL, protocol (ws:// or wss://), port, and path such as /mqtt.`;
+  }
+
+  return errorMessage;
+}
+
 export function MqttProvider({ children }: PropsWithChildren) {
   const clientRef = useRef<MqttClient | null>(null);
   const [settings, setSettings] = useState(DEFAULT_MQTT_CONNECTION_SETTINGS);
@@ -120,6 +149,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
   const [lastError, setLastError] = useState<string | null>(null);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [lastConnectedAt, setLastConnectedAt] = useState<number | null>(null);
+  const [latestLatencySample, setLatestLatencySample] = useState<MqttLatencySample | null>(null);
   const [topicMessages, setTopicMessages] = useState<MqttTopicMessages>({});
   const [logs, setLogs] = useState<MqttLogEntry[]>([
     {
@@ -222,6 +252,19 @@ export function MqttProvider({ children }: PropsWithChildren) {
     [topicMessages]
   );
 
+  const recordLatencySample = useCallback((sample: RecordLatencySampleInput) => {
+    const completedAt = sample.completedAt ?? Date.now();
+
+    setLatestLatencySample({
+      label: sample.label,
+      requestTopicKey: sample.requestTopicKey,
+      responseTopicKey: sample.responseTopicKey,
+      startedAt: sample.startedAt,
+      completedAt,
+      durationMs: Math.max(0, completedAt - sample.startedAt),
+    });
+  }, []);
+
   const publishTopic = useCallback(
     async function <TKey extends MqttTopicKey>(
       topicKey: TKey,
@@ -285,7 +328,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
       const options: IClientOptions = {
         clean: true,
         clientId: getMqttClientId(latestSettings),
-        connectTimeout: 10_000,
+        connectTimeout: 20_000,
         keepalive: 30,
         password: latestSettings.password.trim() || undefined,
         protocolVersion: 4,
@@ -385,7 +428,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
           return;
         }
 
-        const errorMessage = error.message || 'Unable to connect to MQTT broker.';
+        const errorMessage = getFriendlyMqttErrorMessage(error, brokerUrl);
 
         setLastError(errorMessage);
         setStatus('error');
@@ -423,8 +466,10 @@ export function MqttProvider({ children }: PropsWithChildren) {
       isSettingsLoading,
       lastError,
       lastConnectedAt,
+      latestLatencySample,
       logs,
       publishTopic,
+      recordLatencySample,
       refreshSettings,
       settings,
       status,
@@ -441,8 +486,10 @@ export function MqttProvider({ children }: PropsWithChildren) {
       isSettingsLoading,
       lastError,
       lastConnectedAt,
+      latestLatencySample,
       logs,
       publishTopic,
+      recordLatencySample,
       refreshSettings,
       settings,
       status,

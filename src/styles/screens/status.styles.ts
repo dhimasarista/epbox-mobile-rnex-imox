@@ -121,7 +121,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   mqttActionButtonDisconnect: {
-    backgroundColor: AppColors.text,
+    backgroundColor: AppColors.error,
   },
   mqttActionButtonPressed: {
     opacity: 0.92,

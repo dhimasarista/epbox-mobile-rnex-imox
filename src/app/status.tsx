@@ -5,9 +5,7 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-  getMqttRuntimeTransportDetail,
-  getMqttTransportLabel,
-  hasMqttConnectionSettings,
+  hasMqttConnectionSettings
 } from '@/lib/mqtt-settings';
 import {
   MQTT_TOPIC_CATALOG,
@@ -51,7 +49,7 @@ const MQTT_STATUS_META: Record<
   },
   disconnected: {
     accent: AppColors.textSubtle,
-    label: 'Disconnected',
+    label: 'Disconn..',
     detail: 'Broker session is closed.',
   },
   error: {
@@ -203,52 +201,12 @@ export default function StatusScreen() {
   const overviewCards: StatusOverviewCard[] = useMemo(
     () => [
       {
-        title: 'Connection',
-        value: statusMeta.label,
-        detail: lastError ?? statusMessage,
-        iconFamily: 'feather',
-        iconName: 'radio',
-        accent: statusMeta.accent,
-      },
-      {
-        title: 'Broker',
-        value: hasSettings ? 'Configured' : 'Pending',
-        detail: isSettingsLoading ? 'Loading saved broker...' : endpointLabel,
-        iconFamily: 'material',
-        iconName: 'transmission-tower',
-        accent: AppColors.primary,
-      },
-      {
-        title: 'Last Connected',
-        value: lastConnectedAt ? 'Recorded' : 'Waiting',
-        detail: formatConnectedTimestamp(lastConnectedAt),
-        iconFamily: 'feather',
-        iconName: 'clock',
-        accent: AppColors.success,
-      },
-      {
         title: 'Session Duration',
         value: isConnected ? formatSessionDuration(connectedAt, nowTimestamp) : 'Offline',
         detail: isConnected ? 'Active uptime' : 'No running session',
         iconFamily: 'material',
         iconName: 'timer-outline',
         accent: '#3B82F6',
-      },
-      {
-        title: 'Client Session',
-        value: settings.clientId.trim() || 'Auto',
-        detail: settings.username.trim() || 'Anonymous session',
-        iconFamily: 'feather',
-        iconName: 'cpu',
-        accent: AppColors.success,
-      },
-      {
-        title: 'Transport',
-        value: hasSettings ? getMqttTransportLabel(endpointLabel) : 'Standby',
-        detail: getMqttRuntimeTransportDetail(settings),
-        iconFamily: 'material',
-        iconName: 'connection',
-        accent: AppColors.primary,
       },
     ],
     [
@@ -295,36 +253,15 @@ export default function StatusScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>System Status</Text>
           <View style={styles.headerBadge}>
-            <Feather name="activity" size={16} color={statusMeta.accent} />
+            <MaterialCommunityIcons name="transmission-tower" size={18} color={statusMeta.accent} />
             <Text style={styles.headerBadgeText}>{statusMeta.label}</Text>
           </View>
         </View>
 
         <View style={styles.heroCard}>
-          <Text style={styles.heroLabel}>MQTT Control</Text>
-          <Text style={styles.heroValue}>Broker Session</Text>
-          <Text style={styles.heroDetail}>{lastError ?? statusMeta.detail}</Text>
-        </View>
-
-        <View style={styles.mqttCard}>
-          <View style={styles.mqttHeader}>
-            <View style={styles.mqttIconWrap}>
-              <MaterialCommunityIcons name="transmission-tower" size={18} color={AppColors.primary} />
-            </View>
-            <View style={[styles.mqttStatusBadge, { backgroundColor: `${statusMeta.accent}18` }]}>
-              <View style={[styles.mqttStatusDot, { backgroundColor: statusMeta.accent }]} />
-              <Text style={[styles.mqttStatusBadgeText, { color: statusMeta.accent }]}>
-                {statusMeta.label}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.mqttTitle}>Connect MQTT Broker</Text>
-          <Text style={styles.mqttEndpoint}>
-            {isSettingsLoading ? 'Loading saved MQTT settings...' : endpointLabel}
-          </Text>
-          <Text style={styles.mqttDetail}>{statusMessage}</Text>
-
+          <Text style={styles.heroLabel}>{isSettingsLoading ? 'Loading saved settings...' : endpointLabel}</Text>
+          <Text style={styles.heroValue}>Broker Connection</Text>
+          {/* <Text style={styles.heroDetail}>{lastError ?? statusMeta.detail}</Text> */}
           <Pressable
             disabled={isSettingsLoading || isConnecting}
             onPress={handleConnectionAction}
@@ -336,15 +273,9 @@ export default function StatusScreen() {
             ]}>
             <Text style={styles.mqttActionButtonText}>{actionLabel}</Text>
           </Pressable>
-
-          {!hasSettings && !isConnected ? (
-            <Text style={styles.mqttInlineHint}>
-              Isi broker di Settings dulu, lalu tekan Connect dari panel ini.
-            </Text>
-          ) : null}
         </View>
 
-        <Text style={[styles.sectionLabel, styles.sectionLabelStandalone]}>MQTT Overview</Text>
+        {/* <Text style={[styles.sectionLabel, styles.sectionLabelStandalone]}>Overview</Text> */}
         <View style={styles.grid}>
           {overviewCards.map((card) => (
             <View key={card.title} style={styles.card}>

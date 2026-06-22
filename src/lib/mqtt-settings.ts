@@ -69,7 +69,9 @@ export function hasMqttConnectionSettings(settings: MqttConnectionSettings) {
 }
 
 function getDefaultWebSocketProtocol(port: string) {
-  return ['443', '8081', '8084', '8443', '8884'].includes(port) ? 'wss' : 'ws';
+  // Default to plain WS for local/dev brokers unless the user explicitly writes wss://
+  // or uses a common TLS WebSocket port.
+  return ['443', '8443', '8884'].includes(port) ? 'wss' : 'ws';
 }
 
 function getDefaultTcpProtocol(port: string) {

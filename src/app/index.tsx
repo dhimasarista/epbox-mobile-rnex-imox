@@ -6,9 +6,54 @@ import { getBannerHeight, styles } from '@/styles/screens/home.styles';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import LottieView from 'lottie-react-native';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState, type ComponentProps } from 'react';
 import { ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+type HomeStatCardConfig = {
+  title: string;
+  iconName: ComponentProps<typeof Feather>['name'];
+  value: number | string;
+  unit?: string;
+  prefix?: string;
+};
+
+function SignalBarStrip({
+  activeBars,
+  totalBars,
+}: {
+  activeBars: number;
+  totalBars: number;
+}) {
+  return (
+    <View style={styles.batteryVisualizer}>
+      {Array.from({ length: totalBars }, (_, index) => (
+        <View
+          key={`signal-bar-${index}`}
+          style={[styles.batteryBar, index < activeBars && styles.batteryBarActive]}
+        />
+      ))}
+    </View>
+  );
+}
+
+function HomeStatCard({ title, iconName, value, unit, prefix }: HomeStatCardConfig) {
+  return (
+    <View style={styles.statCard}>
+      <View style={styles.statHeader}>
+        <Text style={styles.statTitle}>{title}</Text>
+        <View style={styles.statIconContainer}>
+          <Feather name={iconName} size={14} color={AppColors.primary} />
+        </View>
+      </View>
+      <Text style={styles.statValue}>
+        {prefix ? <Text style={styles.statUnit}>{prefix}</Text> : null}
+        {value}
+        {unit ? <Text style={styles.statUnit}> {unit}</Text> : null}
+      </Text>
+    </View>
+  );
+}
 
 export default function HomeScreen() {
   const { width, height } = useWindowDimensions();
@@ -19,21 +64,39 @@ export default function HomeScreen() {
     refreshIntervalMs: 2000,
   });
 
-  const {
-      clearLogs,
-      connect,
-      connectedAt,
-      disconnect,
-      endpointLabel,
-      isSettingsLoading,
-      lastError,
-      lastConnectedAt,
-      logs,
-      refreshSettings,
-      settings,
-      status,
-      statusMessage,
-    } = useMqtt();
+  const { endpointLabel, latestLatencySample } = useMqtt();
+  const brokerTransportLabel = getMqttTransportLabel(endpointLabel);
+  const responseTimeValue = latestLatencySample?.durationMs ?? '--';
+
+  const statCards = useMemo<HomeStatCardConfig[]>(
+    () => [
+      {
+        title: 'Active Data\nStreams',
+        iconName: 'zap',
+        value: MQTT_TOPIC_CATALOG.length,
+        unit: 'Topics',
+      },
+      {
+        title: 'Broker\nProtocol',
+        iconName: 'activity',
+        value: brokerTransportLabel,
+        prefix: 'MQTT/',
+      },
+      {
+        title: 'Response\nTime',
+        iconName: 'clock',
+        value: responseTimeValue,
+        unit: 'ms',
+      },
+      {
+        title: 'Distance\nto Device',
+        iconName: 'map-pin',
+        value: 108,
+        unit: 'Km',
+      },
+    ],
+    [brokerTransportLabel, responseTimeValue]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -80,14 +143,6 @@ export default function HomeScreen() {
               autoPlay
               loop
             />
-            {/* <View style={styles.unlockButtonOverlay}>
-              <TouchableOpacity style={styles.unlockButton}>
-                  <Text style={styles.unlockText}>Tap to Unlock</Text>
-                  <View style={styles.unlockIconWrapper}>
-                    <Feather name="unlock" size={16} color={AppColors.primary} />
-                </View>
-              </TouchableOpacity>
-            </View> */}
           </View>
         </View>
 
@@ -97,68 +152,14 @@ export default function HomeScreen() {
             <Text style={styles.batteryPercent}>{signal.value}</Text>
             <Text style={styles.batteryLabel}>{signal.label}</Text>
           </View>
-          <View style={styles.batteryVisualizer}>
-            {Array.from({ length: signal.totalBars }, (_, index) => {
-              const isActive = index < signal.activeBars;
-
-              return (
-                <View
-                  key={`signal-bar-${index}`}
-                  style={[styles.batteryBar, isActive && styles.batteryBarActive]}
-                />
-              );
-            })}
-          </View>
+          <SignalBarStrip activeBars={signal.activeBars} totalBars={signal.totalBars} />
         </View>
 
         {/* Stats Grid */}
         <View style={styles.grid}>
-          {/* Item 1 */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Active Data{"\n"}Streams</Text>
-              <View style={styles.statIconContainer}>
-                <Feather name="zap" size={14} color={AppColors.primary} />
-                
-              </View>
-            </View>
-            <Text style={styles.statValue}>
-              {MQTT_TOPIC_CATALOG.length} <Text style={styles.statUnit}>Topics</Text>
-            </Text>
-          </View>
-
-          {/* Item 2 */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Broker{"\n"}Protocol</Text>
-              <View style={styles.statIconContainer}>
-                <Feather name="activity" size={14} color={AppColors.primary} />
-              </View>
-            </View>
-            <Text style={styles.statValue}><Text style={styles.statUnit}>MQTT/</Text>{getMqttTransportLabel(endpointLabel)}</Text>
-          </View>
-
-          {/* Item 3 */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Response{"\n"}Time</Text>
-              <View style={styles.statIconContainer}>
-                <Feather name="clock" size={14} color={AppColors.primary} />
-              </View>
-            </View>
-            <Text style={styles.statValue}>248 <Text style={styles.statUnit}>ms</Text></Text>
-          </View>
-
-          {/* Item 4 */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Distance{"\n"}to Device</Text>
-              <View style={styles.statIconContainer}>
-                <Feather name="map-pin" size={14} color={AppColors.primary} />
-              </View>
-            </View>
-            <Text style={styles.statValue}>108 <Text style={styles.statUnit}>Km</Text></Text>
-          </View>
+          {statCards.map((card) => (
+            <HomeStatCard key={card.title} {...card} />
+          ))}
         </View>
         
         {/* Spacer for custom bottom tab */}

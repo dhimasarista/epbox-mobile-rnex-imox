@@ -273,6 +273,7 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     color: AppColors.textSubtle,
+    textAlign: 'center',
   },
   alarmSectionHeader: {
     ...layoutPrimitives.headerRow,

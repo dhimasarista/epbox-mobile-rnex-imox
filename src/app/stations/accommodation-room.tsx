@@ -333,7 +333,7 @@ function AccommodationTemperatureField({
           <Text style={styles.sliderRangeText}>{ACCOMMODATION_TEMP_MAX_C} C</Text>
         </View>
 
-        <Text style={styles.dashboardControlHint}>{hint}</Text>
+        {/* <Text style={styles.dashboardControlHint}>{hint}</Text> */}
       </View>
     </View>
   );
@@ -403,32 +403,7 @@ function AccommodationAlarmSection({
   return (
     <View style={styles.sectionCard}>
       <View style={styles.alarmSectionHeader}>
-        <View>
-          <Text style={styles.fieldLabel}>Alarm Input / Output</Text>
-          <Text style={styles.alarmSectionSubtitle}>Controller UWP alarm state and control actions.</Text>
-        </View>
-        <View
-          style={[
-            styles.signalValueChip,
-            {
-              backgroundColor: alarmPalette.surface,
-              borderColor: alarmPalette.border,
-            },
-          ]}>
-          <View
-            style={[
-              styles.signalValueDot,
-              { backgroundColor: alarmPalette.accent },
-            ]}
-          />
-          <Text
-            style={[
-              styles.signalValueText,
-              { color: alarmPalette.text },
-            ]}>
-            {alarmSummaryLabel}
-          </Text>
-        </View>
+        
       </View>
 
       <View style={styles.alarmSummaryRow}>
@@ -440,7 +415,7 @@ function AccommodationAlarmSection({
               borderColor: alarmPalette.border,
             },
           ]}>
-          <Text style={styles.alarmSummaryLabel}>Alarm Output</Text>
+          <Text style={styles.alarmSummaryLabel}>Alarm</Text>
           <Text style={[styles.alarmSummaryValue, { color: alarmPalette.text }]}>
             {alarmStatusLabel}
           </Text>
@@ -492,7 +467,7 @@ function AccommodationAlarmSection({
         ))}
       </View>
 
-      <Text style={styles.dashboardControlHint}>{hint}</Text>
+      {/* <Text style={styles.dashboardControlHint}>{hint}</Text> */}
 
       <View style={styles.alarmCommandGrid}>
         <AlarmCommandButton
@@ -578,7 +553,7 @@ function AccommodationSourceSection({
 }
 
 export default function AccommodationRoom() {
-  const { publishTopic, status } = useMqtt();
+  const { publishTopic, recordLatencySample, status } = useMqtt();
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const [draftForm, setDraftForm] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
   const [confirmedForm, setConfirmedForm] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
@@ -587,6 +562,7 @@ export default function AccommodationRoom() {
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
   const hasHydratedRef = useRef(false);
   const temperatureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
 
   const clearTemperatureDebounce = useCallback(() => {
     if (!temperatureDebounceRef.current) {
@@ -603,7 +579,7 @@ export default function AccommodationRoom() {
         ? getAccommodationRoomAlarmState(metricsTopic.payload)
         : {
             alarmStatusCode: null,
-            alarmStatusLabel: 'Waiting for metrics',
+            alarmStatusLabel: 'Waiting',
             sirenOn: null,
             lastSignalAt: null,
             outputs: ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS.map((item) => ({
@@ -781,6 +757,24 @@ export default function AccommodationRoom() {
     }
 
     if (temperatureAcked || smokeAcked) {
+      const ackedCommands = [
+        temperatureAcked ? pendingCommands.temperatureValue ?? null : null,
+        smokeAcked ? pendingCommands.smokeDetected ?? null : null,
+      ]
+        .filter((command): command is PendingCounterCommand => command !== null)
+        .sort((left, right) => left.sentAt - right.sentAt);
+      const latestAckedCommand = ackedCommands[ackedCommands.length - 1] ?? null;
+
+      if (latestAckedCommand) {
+        recordLatencySample({
+          label: latestAckedCommand.requestedLabel,
+          requestTopicKey: 'gatewayOtCommand',
+          responseTopicKey: 'gatewayMetrics',
+          startedAt: latestAckedCommand.sentAt,
+          completedAt: metricsReceivedAt ?? Date.now(),
+        });
+      }
+
       setPendingCommands((current) => {
         const next = { ...current };
 
@@ -796,7 +790,7 @@ export default function AccommodationRoom() {
       });
       setLastCommandError(null);
     }
-  }, [metricsTopic.payload, pendingCommands]);
+  }, [metricsReceivedAt, metricsTopic.payload, pendingCommands, recordLatencySample]);
 
   useEffect(() => {
     if (!pendingAlarmCommand || alarmState.lastSignalAt === null) {
@@ -807,10 +801,17 @@ export default function AccommodationRoom() {
       pendingAlarmCommand.baselineSignalAt === null ||
       alarmState.lastSignalAt > pendingAlarmCommand.baselineSignalAt
     ) {
+      recordLatencySample({
+        label: pendingAlarmCommand.requestedLabel,
+        requestTopicKey: 'gatewayOtCommand',
+        responseTopicKey: 'gatewayMetrics',
+        startedAt: pendingAlarmCommand.sentAt,
+        completedAt: metricsReceivedAt ?? Date.now(),
+      });
       setPendingAlarmCommand(null);
       setLastCommandError(null);
     }
-  }, [alarmState.lastSignalAt, pendingAlarmCommand]);
+  }, [alarmState.lastSignalAt, metricsReceivedAt, pendingAlarmCommand, recordLatencySample]);
 
   const handleSmokeDetectedChange = useCallback(
     (nextValue: boolean) => {
@@ -853,7 +854,7 @@ export default function AccommodationRoom() {
   const isSmokePending = pendingCommands.smokeDetected !== undefined;
   const isAlarmPending = pendingAlarmCommand !== null;
   const isAnyPending = isTemperaturePending || isSmokePending || isAlarmPending;
-  const lastMetricsAt = metricsTopic.message?.receivedAt ?? null;
+  const lastMetricsAt = metricsReceivedAt;
   const lastAlarmMetricsAt = alarmState.lastSignalAt ?? lastMetricsAt;
 
   const heroSyncLabel = useMemo(() => {
@@ -861,7 +862,7 @@ export default function AccommodationRoom() {
       return 'Offline';
     }
 
-    return isAnyPending ? 'Pending Ack' : 'Synced';
+    return isAnyPending ? 'Loading' : 'Synced';
   }, [isAnyPending, status]);
 
   const heroSyncHint = useMemo(() => {
@@ -874,11 +875,11 @@ export default function AccommodationRoom() {
     }
 
     if (isAnyPending) {
-      return 'Station controls publish to `cmd/ot`, but cards only change after `metrics` confirms them.';
+      return 'Waiting metrics response';
     }
 
     if (lastMetricsAt) {
-      return `Latest metrics response received at ${formatEventTime(lastMetricsAt)}.`;
+      return `Metrics response received at ${formatEventTime(lastMetricsAt)}.`;
     }
 
     return 'Waiting for the first metrics response from the gateway.';
@@ -890,9 +891,9 @@ export default function AccommodationRoom() {
     }
 
     if (isSmokePending) {
-      return `Requested ${
+      return `Request ${
         pendingCommands.smokeDetected?.requestedLabel ?? 'Smoke Status'
-      }. UI updates after the gateway replies on metrics.`;
+      }.`;
     }
 
     if (status !== 'connected') {
@@ -914,7 +915,7 @@ export default function AccommodationRoom() {
     if (isTemperaturePending) {
       return `Requested ${
         pendingCommands.temperatureValue?.requestedLabel ?? draftForm.temperatureValue
-      }. Slider is draft only until metrics confirms it.`;
+      }.`;
     }
 
     if (status !== 'connected') {
@@ -962,7 +963,7 @@ export default function AccommodationRoom() {
       return `Publishing ${pendingAlarmCommand.cmd} to device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}.`;
     }
 
-    return 'Actions publish JSON commands to the same `cmd/ot` topic used by the gateway controller.';
+    return `last refreshed at ${formatEventTime(lastAlarmMetricsAt)}`;
   }, [pendingAlarmCommand]);
 
   return (
