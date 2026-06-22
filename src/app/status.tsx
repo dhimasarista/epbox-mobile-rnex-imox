@@ -9,7 +9,13 @@ import {
   getMqttTransportLabel,
   hasMqttConnectionSettings,
 } from '@/lib/mqtt-settings';
-import { useMqtt, type MqttConnectionState, type MqttLogLevel } from '@/providers/mqtt-provider';
+import {
+  MQTT_TOPIC_CATALOG,
+  useMqtt,
+  type MqttConnectionState,
+  type MqttLogLevel,
+  type MqttTopicDefinition,
+} from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { styles } from '@/styles/screens/status.styles';
 
@@ -79,6 +85,30 @@ function getLogAccent(level: MqttLogLevel) {
   return AppColors.primary;
 }
 
+function getTopicDirectionAccent(direction: MqttTopicDefinition['direction']) {
+  if (direction === 'publish') {
+    return AppColors.primary;
+  }
+
+  if (direction === 'subscribe') {
+    return AppColors.info;
+  }
+
+  return AppColors.success;
+}
+
+function getTopicDirectionLabel(direction: MqttTopicDefinition['direction']) {
+  if (direction === 'publish') {
+    return 'Publish';
+  }
+
+  if (direction === 'subscribe') {
+    return 'Subscribe';
+  }
+
+  return 'Duplex';
+}
+
 function formatConnectedTimestamp(timestamp: number | null) {
   if (!timestamp) {
     return 'No session yet';
@@ -106,6 +136,20 @@ function formatSessionDuration(connectedAt: number | null, nowTimestamp: number)
   return `${hours}:${minutes}:${seconds}`;
 }
 
+function formatTopicPayloadPreview(payload: unknown) {
+  try {
+    const serialized = JSON.stringify(payload);
+
+    if (serialized.length <= 120) {
+      return serialized;
+    }
+
+    return `${serialized.slice(0, 117)}...`;
+  } catch {
+    return 'Unable to preview payload.';
+  }
+}
+
 export default function StatusScreen() {
   const {
     clearLogs,
@@ -121,6 +165,7 @@ export default function StatusScreen() {
     settings,
     status,
     statusMessage,
+    topicMessages,
   } = useMqtt();
   const [activeLogFilter, setActiveLogFilter] = useState<LogFilter>('all');
   const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
@@ -226,6 +271,14 @@ export default function StatusScreen() {
     () => logs.filter((log) => activeLogFilter === 'all' || log.level === activeLogFilter),
     [activeLogFilter, logs]
   );
+  const topicCatalog = useMemo(
+    () =>
+      MQTT_TOPIC_CATALOG.map((definition) => ({
+        definition,
+        latestMessage: topicMessages[definition.key] ?? null,
+      })),
+    [topicMessages]
+  );
 
   const handleConnectionAction = () => {
     if (isConnected) {
@@ -307,6 +360,50 @@ export default function StatusScreen() {
               <Text style={styles.cardDetail}>{card.detail}</Text>
             </View>
           ))}
+        </View>
+
+        <Text style={[styles.sectionLabel, styles.sectionLabelStandalone]}>Topic Catalog</Text>
+        <View style={styles.topicCard}>
+          {topicCatalog.map(({ definition, latestMessage }, index) => {
+            const accent = getTopicDirectionAccent(definition.direction);
+
+            return (
+              <View
+                key={definition.key}
+                style={[
+                  styles.topicItem,
+                  index < topicCatalog.length - 1 && styles.topicItemDivider,
+                ]}>
+                <View style={styles.topicTopRow}>
+                  <Text style={styles.topicLabel}>{definition.label}</Text>
+                  <View
+                    style={[
+                      styles.topicDirectionBadge,
+                      { backgroundColor: `${accent}18` },
+                    ]}>
+                    <Text style={[styles.topicDirectionText, { color: accent }]}>
+                      {getTopicDirectionLabel(definition.direction)}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.topicPath}>{definition.topic}</Text>
+                <Text style={styles.topicDescription}>{definition.description}</Text>
+                <Text style={styles.topicPayload}>
+                  {latestMessage
+                    ? formatTopicPayloadPreview(latestMessage.payload)
+                    : 'No payload yet. Connect MQTT and wait for gateway events or publish a command.'}
+                </Text>
+                <Text style={styles.topicTimestamp}>
+                  {latestMessage
+                    ? `Last update ${formatConnectedTimestamp(latestMessage.receivedAt)} via ${
+                        latestMessage.source === 'broker' ? 'broker' : 'local publish'
+                      }`
+                    : 'Waiting for first payload'}
+                </Text>
+              </View>
+            );
+          })}
         </View>
 
         <View style={styles.sectionHeader}>

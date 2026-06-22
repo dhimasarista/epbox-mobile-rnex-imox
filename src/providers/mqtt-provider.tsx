@@ -1,4 +1,8 @@
-import mqtt, { type IClientOptions, type MqttClient } from 'mqtt';
+import mqtt, {
+  type IClientOptions,
+  type IClientPublishOptions,
+  type MqttClient,
+} from 'mqtt';
 import {
   createContext,
   type PropsWithChildren,
@@ -21,9 +25,20 @@ import {
   hasMqttConnectionSettings,
   type MqttConnectionSettings,
 } from '@/lib/mqtt-settings';
+import {
+  getMqttTopicDefinition,
+  getMqttTopicDefinitionByPath,
+  MQTT_TOPIC_CATALOG,
+  MQTT_TOPICS,
+  type MqttTopicDefinition,
+  type MqttTopicKey,
+  type MqttTopicPayloadMap,
+} from '@/lib/mqtt-topics';
 
 export type MqttConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 export type MqttLogLevel = 'info' | 'success' | 'warning' | 'error';
+export type MqttPublishOptions = Pick<IClientPublishOptions, 'qos' | 'retain'>;
+export type MqttMessageSource = 'broker' | 'local-publish';
 
 export type MqttLogEntry = {
   id: string;
@@ -32,20 +47,42 @@ export type MqttLogEntry = {
   timestamp: string;
 };
 
+export type MqttTopicMessage<TKey extends MqttTopicKey = MqttTopicKey> = {
+  key: TKey;
+  topic: string;
+  payload: MqttTopicPayloadMap[TKey];
+  raw: string;
+  receivedAt: number;
+  source: MqttMessageSource;
+};
+
+type MqttTopicMessages = Partial<Record<MqttTopicKey, MqttTopicMessage>>;
+
+type PublishTopicFn = <TKey extends MqttTopicKey>(
+  topicKey: TKey,
+  payload: MqttTopicPayloadMap[TKey],
+  options?: MqttPublishOptions
+) => Promise<void>;
+
+type GetTopicMessageFn = <TKey extends MqttTopicKey>(topicKey: TKey) => MqttTopicMessage<TKey> | null;
+
 type MqttContextValue = {
   clearLogs: () => void;
   connect: () => Promise<void>;
   connectedAt: number | null;
   disconnect: () => void;
   endpointLabel: string;
+  getTopicMessage: GetTopicMessageFn;
   isSettingsLoading: boolean;
   lastError: string | null;
   lastConnectedAt: number | null;
   logs: MqttLogEntry[];
+  publishTopic: PublishTopicFn;
   refreshSettings: () => Promise<void>;
   settings: MqttConnectionSettings;
   status: MqttConnectionState;
   statusMessage: string;
+  topicMessages: MqttTopicMessages;
 };
 
 const MqttContext = createContext<MqttContextValue | null>(null);
@@ -58,6 +95,22 @@ function formatLogTimestamp() {
   });
 }
 
+function createTopicMessage<TKey extends MqttTopicKey>(
+  definition: MqttTopicDefinition<TKey>,
+  payload: MqttTopicPayloadMap[TKey],
+  raw: string,
+  source: MqttMessageSource
+): MqttTopicMessage<TKey> {
+  return {
+    key: definition.key,
+    topic: definition.topic,
+    payload,
+    raw,
+    receivedAt: Date.now(),
+    source,
+  };
+}
+
 export function MqttProvider({ children }: PropsWithChildren) {
   const clientRef = useRef<MqttClient | null>(null);
   const [settings, setSettings] = useState(DEFAULT_MQTT_CONNECTION_SETTINGS);
@@ -67,6 +120,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
   const [lastError, setLastError] = useState<string | null>(null);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [lastConnectedAt, setLastConnectedAt] = useState<number | null>(null);
+  const [topicMessages, setTopicMessages] = useState<MqttTopicMessages>({});
   const [logs, setLogs] = useState<MqttLogEntry[]>([
     {
       id: 'mqtt-log-init',
@@ -77,15 +131,17 @@ export function MqttProvider({ children }: PropsWithChildren) {
   ]);
 
   const appendLog = useCallback((level: MqttLogLevel, message: string) => {
-    setLogs((currentLogs) => [
-      {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        level,
-        message,
-        timestamp: formatLogTimestamp(),
-      },
-      ...currentLogs,
-    ].slice(0, 12));
+    setLogs((currentLogs) =>
+      [
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          level,
+          message,
+          timestamp: formatLogTimestamp(),
+        },
+        ...currentLogs,
+      ].slice(0, 20)
+    );
   }, []);
 
   const clearLogs = useCallback(() => {
@@ -131,13 +187,82 @@ export function MqttProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
+  const subscribeToCatalog = useCallback(
+    (client: MqttClient) => {
+      MQTT_TOPIC_CATALOG.forEach((definition) => {
+        if (definition.direction === 'publish') {
+          return;
+        }
+
+        client.subscribe(definition.topic, { qos: definition.qos ?? 0 }, (error) => {
+          if (error) {
+            appendLog('error', `Failed to subscribe ${definition.label}: ${error.message}`);
+            return;
+          }
+
+          appendLog('success', `Subscribed ${definition.label}.`);
+        });
+      });
+    },
+    [appendLog]
+  );
+
   useEffect(() => {
-    refreshSettings();
+    void refreshSettings();
 
     return () => {
       disposeClient();
     };
   }, [disposeClient, refreshSettings]);
+
+  const getTopicMessage = useCallback(
+    function <TKey extends MqttTopicKey>(topicKey: TKey) {
+      return (topicMessages[topicKey] as MqttTopicMessage<TKey> | undefined) ?? null;
+    },
+    [topicMessages]
+  );
+
+  const publishTopic = useCallback(
+    async function <TKey extends MqttTopicKey>(
+      topicKey: TKey,
+      payload: MqttTopicPayloadMap[TKey],
+      options?: MqttPublishOptions
+    ) {
+      const client = clientRef.current;
+      const definition = getMqttTopicDefinition(topicKey);
+
+      if (!client || !client.connected) {
+        throw new Error(`MQTT is not connected. Unable to publish ${definition.label}.`);
+      }
+
+      const rawPayload = definition.serialize(payload);
+
+      await new Promise<void>((resolve, reject) => {
+        client.publish(
+          definition.topic,
+          rawPayload,
+          {
+            qos: options?.qos ?? definition.qos ?? 0,
+            retain: options?.retain ?? definition.retain ?? true,
+          },
+          (error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+
+            resolve();
+          }
+        );
+      });
+
+      setTopicMessages((currentMessages) => ({
+        ...currentMessages,
+        [topicKey]: createTopicMessage(definition, payload, rawPayload, 'local-publish'),
+      }));
+    },
+    []
+  );
 
   const connect = useCallback(async () => {
     try {
@@ -191,6 +316,34 @@ export function MqttProvider({ children }: PropsWithChildren) {
         setConnectedAt(now);
         setLastConnectedAt(now);
         appendLog('success', 'Broker connected successfully.');
+        subscribeToCatalog(client);
+      });
+
+      client.on('message', (topic, messageBuffer) => {
+        if (clientRef.current !== client) {
+          return;
+        }
+
+        const definition = getMqttTopicDefinitionByPath(topic);
+
+        if (!definition) {
+          return;
+        }
+
+        try {
+          const rawPayload = messageBuffer.toString();
+          const payload = definition.parse(rawPayload);
+
+          setTopicMessages((currentMessages) => ({
+            ...currentMessages,
+            [definition.key]: createTopicMessage(definition, payload, rawPayload, 'broker'),
+          }));
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : 'Unknown payload parsing error.';
+
+          appendLog('error', `Failed to parse ${definition.label}: ${errorMessage}`);
+        }
       });
 
       client.on('reconnect', () => {
@@ -249,7 +402,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
       setLastError(errorMessage);
       appendLog('error', errorMessage);
     }
-  }, [appendLog, disposeClient]);
+  }, [appendLog, disposeClient, subscribeToCatalog]);
 
   const disconnect = useCallback(() => {
     setLastError(null);
@@ -266,14 +419,17 @@ export function MqttProvider({ children }: PropsWithChildren) {
       connectedAt,
       disconnect,
       endpointLabel,
+      getTopicMessage,
       isSettingsLoading,
       lastError,
       lastConnectedAt,
       logs,
+      publishTopic,
       refreshSettings,
       settings,
       status,
       statusMessage,
+      topicMessages,
     }),
     [
       clearLogs,
@@ -281,14 +437,17 @@ export function MqttProvider({ children }: PropsWithChildren) {
       connectedAt,
       disconnect,
       endpointLabel,
+      getTopicMessage,
       isSettingsLoading,
       lastError,
       lastConnectedAt,
       logs,
+      publishTopic,
       refreshSettings,
       settings,
       status,
       statusMessage,
+      topicMessages,
     ]
   );
 
@@ -304,3 +463,31 @@ export function useMqtt() {
 
   return context;
 }
+
+export function useMqttTopic<TKey extends MqttTopicKey>(topicKey: TKey) {
+  const { getTopicMessage, publishTopic } = useMqtt();
+  const message = getTopicMessage(topicKey);
+
+  const publish = useCallback(
+    (payload: MqttTopicPayloadMap[TKey], options?: MqttPublishOptions) =>
+      publishTopic(topicKey, payload, options),
+    [publishTopic, topicKey]
+  );
+
+  return useMemo(
+    () => ({
+      definition: getMqttTopicDefinition(topicKey),
+      message,
+      payload: message?.payload ?? null,
+      publish,
+    }),
+    [message, publish, topicKey]
+  );
+}
+
+export { MQTT_TOPIC_CATALOG, MQTT_TOPICS };
+export type {
+  MqttTopicDefinition,
+  MqttTopicKey,
+  MqttTopicPayloadMap,
+} from '@/lib/mqtt-topics';

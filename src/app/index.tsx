@@ -1,8 +1,10 @@
-import { useFocusEffect } from 'expo-router';
 import { useNetworkSignal } from '@/hooks/use-network-signal';
+import { getMqttTransportLabel } from '@/lib/mqtt-settings';
+import { MQTT_TOPIC_CATALOG, useMqtt } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { getBannerHeight, styles } from '@/styles/screens/home.styles';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import LottieView from 'lottie-react-native';
 import { useCallback, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
@@ -16,6 +18,22 @@ export default function HomeScreen() {
     enabled: isSignalPollingEnabled,
     refreshIntervalMs: 2000,
   });
+
+  const {
+      clearLogs,
+      connect,
+      connectedAt,
+      disconnect,
+      endpointLabel,
+      isSettingsLoading,
+      lastError,
+      lastConnectedAt,
+      logs,
+      refreshSettings,
+      settings,
+      status,
+      statusMessage,
+    } = useMqtt();
 
   useFocusEffect(
     useCallback(() => {
@@ -39,7 +57,7 @@ export default function HomeScreen() {
             </View>
             <View style={styles.statusRow}>
               <View style={styles.dot} />
-              <Text style={styles.subtitle}>IMOX 2026</Text>
+              <Text style={styles.subtitle}>Batam, Riau Island</Text>
             </View>
           </View>
           <View style={styles.headerIcons}>
@@ -104,18 +122,20 @@ export default function HomeScreen() {
                 
               </View>
             </View>
-            <Text style={styles.statValue}>7 <Text style={styles.statUnit}>Topics</Text></Text>
+            <Text style={styles.statValue}>
+              {MQTT_TOPIC_CATALOG.length} <Text style={styles.statUnit}>Topics</Text>
+            </Text>
           </View>
 
           {/* Item 2 */}
           <View style={styles.statCard}>
             <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Energy{"\n"}Consumption</Text>
+              <Text style={styles.statTitle}>Broker{"\n"}Protocol</Text>
               <View style={styles.statIconContainer}>
                 <Feather name="activity" size={14} color={AppColors.primary} />
               </View>
             </View>
-            <Text style={styles.statValue}>35 <Text style={styles.statUnit}>kWh</Text></Text>
+            <Text style={styles.statValue}><Text style={styles.statUnit}>MQTT/</Text>{getMqttTransportLabel(endpointLabel)}</Text>
           </View>
 
           {/* Item 3 */}
