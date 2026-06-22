@@ -292,6 +292,11 @@ export const styles = StyleSheet.create({
     gap: AppSpacing.md,
     marginBottom: AppSpacing.lg,
   },
+  alarmMetaRow: {
+    flexDirection: 'row',
+    gap: AppSpacing.md,
+    marginBottom: AppSpacing.lg,
+  },
   alarmSummaryChip: {
     flex: 1,
     borderRadius: AppRadii.md,
@@ -316,6 +321,26 @@ export const styles = StyleSheet.create({
     borderColor: AppColors.border,
     backgroundColor: AppColors.surfaceMuted,
     overflow: 'hidden',
+  },
+  alarmNoticeCard: {
+    marginTop: AppSpacing.lg,
+    borderRadius: AppRadii.lg,
+    borderWidth: 1,
+    borderColor: '#F2D17A',
+    backgroundColor: '#FFF7E0',
+    paddingHorizontal: AppSpacing.md,
+    paddingVertical: AppSpacing.md,
+    gap: AppSpacing.xs,
+  },
+  alarmNoticeTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#A16207',
+  },
+  alarmNoticeText: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#A16207',
   },
   alarmOutputRow: {
     ...layoutPrimitives.centerRow,

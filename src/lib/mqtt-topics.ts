@@ -417,7 +417,7 @@ export function getAccommodationRoomAlarmState(payload: CarloGavazziMetricsPaylo
 
   return {
     alarmStatusCode,
-    alarmStatusLabel: alarmStatusMeta?.label ?? 'Unknown alarm state',
+    alarmStatusLabel: alarmStatusMeta?.label ?? 'N/A',
     sirenOn,
     lastSignalAt: timestamps.length > 0 ? Math.max(...timestamps) : null,
     outputs: ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS.map((item) => ({

@@ -22,7 +22,7 @@ import {
   getAccommodationRoomMetricsState,
   type CarloGavazziAlarmCommandName,
 } from '@/lib/mqtt-topics';
-import { useMqtt, useMqttTopic } from '@/providers/mqtt-provider';
+import { useMqtt, useMqttTopic, type MqttConnectionState } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { getSignalPalette, styles, type SignalTone } from '@/styles/screens/station.styles';
 
@@ -30,6 +30,7 @@ const ACCOMMODATION_TEMP_WARNING_C = 40;
 const ACCOMMODATION_TEMP_ALERT_C = 55;
 const ACCOMMODATION_TEMP_MAX_C = 120;
 const COMMAND_DEBOUNCE_MS = 250;
+const ALARM_WRITE_GUARD_MS = 5_000;
 
 type AccommodationEditableKey = 'smokeDetected' | 'temperatureValue';
 type PendingCounterCommand = {
@@ -95,6 +96,62 @@ function formatEventTime(timestamp: number | null) {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+function formatAlarmWriteWindow(milliseconds: number) {
+  return `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
+}
+
+function getMqttLinkMeta(
+  connectionState: MqttConnectionState,
+  latestRoundtripMs: number | null,
+  isPending: boolean
+) {
+  if (connectionState !== 'connected') {
+    return {
+      label: 'Offline',
+      detail: 'No broker session',
+      tone: 'danger' as const,
+    };
+  }
+
+  if (isPending) {
+    return {
+      label: 'Waiting Ack',
+      detail: 'Awaiting metrics',
+      tone: 'warning' as const,
+    };
+  }
+
+  if (latestRoundtripMs === null) {
+    return {
+      label: 'Ready',
+      detail: 'No RTT sample yet',
+      tone: 'normal' as const,
+    };
+  }
+
+  if (latestRoundtripMs >= 2500) {
+    return {
+      label: 'Slow',
+      detail: `${latestRoundtripMs} ms`,
+      tone: 'danger' as const,
+    };
+  }
+
+  if (latestRoundtripMs >= 1000) {
+    return {
+      label: 'Busy',
+      detail: `${latestRoundtripMs} ms`,
+      tone: 'warning' as const,
+    };
+  }
+
+  return {
+    label: 'Fast',
+    detail: `${latestRoundtripMs} ms`,
+    tone: 'normal' as const,
+  };
 }
 
 function AccommodationRoomHeader() {
@@ -380,8 +437,15 @@ function AccommodationAlarmSection({
   outputs,
   hint,
   commandHint,
+  behaviorHint,
   isConnected,
+  isActionLocked,
   isPending,
+  mqttLinkLabel,
+  mqttLinkDetail,
+  mqttLinkTone,
+  writeWindowLabel,
+  writeWindowDetail,
   onCommandPress,
 }: {
   alarmStatusLabel: string;
@@ -390,22 +454,26 @@ function AccommodationAlarmSection({
   outputs: { code: number; label: string; active: boolean }[];
   hint: string;
   commandHint: string;
+  behaviorHint: string;
   isConnected: boolean;
+  isActionLocked: boolean;
   isPending: boolean;
+  mqttLinkLabel: string;
+  mqttLinkDetail: string;
+  mqttLinkTone: SignalTone;
+  writeWindowLabel: string;
+  writeWindowDetail: string;
   onCommandPress: (command: CarloGavazziAlarmCommandName, label: string) => void;
 }) {
   const alarmTone = getAccommodationAlarmTone(alarmStatusCode, sirenOn);
   const alarmPalette = getSignalPalette(alarmTone);
+  const mqttLinkPalette = getSignalPalette(mqttLinkTone);
   const sirenLabel = sirenOn === null ? 'Unknown' : sirenOn ? 'ON' : 'OFF';
   const alarmSummaryLabel =
-    alarmStatusCode === null ? 'Waiting for metrics' : `${alarmStatusCode}. ${alarmStatusLabel}`;
+    alarmStatusCode === null ? '-' : `${alarmStatusCode}. ${alarmStatusLabel}`;
 
   return (
     <View style={styles.sectionCard}>
-      <View style={styles.alarmSectionHeader}>
-        
-      </View>
-
       <View style={styles.alarmSummaryRow}>
         <View
           style={[
@@ -439,7 +507,6 @@ function AccommodationAlarmSection({
           </Text>
         </View>
       </View>
-
       <View style={styles.alarmOutputList}>
         {outputs.map((output) => (
           <View
@@ -467,43 +534,41 @@ function AccommodationAlarmSection({
         ))}
       </View>
 
-      {/* <Text style={styles.dashboardControlHint}>{hint}</Text> */}
-
       <View style={styles.alarmCommandGrid}>
         <AlarmCommandButton
           label="Acknowledge Alarm"
           tone="primary"
-          disabled={!isConnected || isPending}
+          disabled={!isConnected || isActionLocked}
           onPress={() => onCommandPress('Acknowledgement', 'Acknowledge Alarm')}
         />
         <AlarmCommandButton
           label="Reset Alarm"
           tone="primary"
-          disabled={!isConnected || isPending}
+          disabled={!isConnected || isActionLocked}
           onPress={() => onCommandPress('Reset', 'Reset Alarm')}
         />
         <AlarmCommandButton
           label="Reset ON"
           tone="secondary"
-          disabled={!isConnected || isPending}
+          disabled={!isConnected || isActionLocked}
           onPress={() => onCommandPress('ResetOn', 'Reset ON')}
         />
         <AlarmCommandButton
           label="Reset OFF"
           tone="secondary"
-          disabled={!isConnected || isPending}
+          disabled={!isConnected || isActionLocked}
           onPress={() => onCommandPress('ResetOff', 'Reset OFF')}
         />
         <AlarmCommandButton
           label="Test Alarm ON"
           tone="secondary"
-          disabled={!isConnected || isPending}
+          disabled={!isConnected || isActionLocked}
           onPress={() => onCommandPress('TestAlarmOn', 'Test Alarm ON')}
         />
         <AlarmCommandButton
           label="Test Alarm OFF"
           tone="secondary"
-          disabled={!isConnected || isPending}
+          disabled={!isConnected || isActionLocked}
           onPress={() => onCommandPress('TestAlarmOff', 'Test Alarm OFF')}
         />
       </View>
@@ -553,13 +618,14 @@ function AccommodationSourceSection({
 }
 
 export default function AccommodationRoom() {
-  const { publishTopic, recordLatencySample, status } = useMqtt();
+  const { latestLatencySample, publishTopic, recordLatencySample, status } = useMqtt();
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const [draftForm, setDraftForm] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
   const [confirmedForm, setConfirmedForm] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
   const [pendingCommands, setPendingCommands] = useState<PendingCounterCommandMap>({});
   const [pendingAlarmCommand, setPendingAlarmCommand] = useState<PendingAlarmCommand | null>(null);
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
+  const [alarmClockNow, setAlarmClockNow] = useState(() => Date.now());
   const hasHydratedRef = useRef(false);
   const temperatureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
@@ -589,6 +655,14 @@ export default function AccommodationRoom() {
           },
     [metricsTopic.payload]
   );
+  const alarmWriteWindowRemainingMs = useMemo(() => {
+    if (!pendingAlarmCommand) {
+      return 0;
+    }
+
+    return Math.max(0, pendingAlarmCommand.sentAt + ALARM_WRITE_GUARD_MS - alarmClockNow);
+  }, [alarmClockNow, pendingAlarmCommand]);
+  const isAlarmWriteWindowActive = alarmWriteWindowRemainingMs > 0;
 
   const sendSetValueCommand = useCallback(
     async (field: AccommodationEditableKey, nextMetricValue: number, requestedLabel: string) => {
@@ -635,6 +709,15 @@ export default function AccommodationRoom() {
         return;
       }
 
+      if (isAlarmWriteWindowActive) {
+        setLastCommandError(
+          `UWP write window is still active. Wait ${formatAlarmWriteWindow(
+            alarmWriteWindowRemainingMs
+          )} before sending ${requestedLabel} again.`
+        );
+        return;
+      }
+
       try {
         await publishTopic(
           'gatewayOtCommand',
@@ -644,11 +727,12 @@ export default function AccommodationRoom() {
           ),
           { qos: 0, retain: false }
         );
+        const sentAt = Date.now();
 
         setPendingAlarmCommand({
           cmd: command,
           requestedLabel,
-          sentAt: Date.now(),
+          sentAt,
           baselineSignalAt: alarmState.lastSignalAt,
         });
         setLastCommandError(null);
@@ -658,7 +742,7 @@ export default function AccommodationRoom() {
         );
       }
     },
-    [alarmState.lastSignalAt, publishTopic, status]
+    [alarmState.lastSignalAt, alarmWriteWindowRemainingMs, isAlarmWriteWindowActive, publishTopic, status]
   );
 
   useEffect(() => {
@@ -683,6 +767,21 @@ export default function AccommodationRoom() {
   }, [clearTemperatureDebounce]);
 
   useEffect(() => {
+    if (!pendingAlarmCommand || !isAlarmWriteWindowActive) {
+      return;
+    }
+
+    setAlarmClockNow(Date.now());
+    const intervalId = setInterval(() => {
+      setAlarmClockNow(Date.now());
+    }, 250);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [isAlarmWriteWindowActive, pendingAlarmCommand]);
+
+  useEffect(() => {
     if (!hasHydratedRef.current) {
       return;
     }
@@ -702,6 +801,16 @@ export default function AccommodationRoom() {
     setPendingCommands({});
     setPendingAlarmCommand(null);
   }, [clearTemperatureDebounce, status]);
+
+  useEffect(() => {
+    if (isAlarmWriteWindowActive) {
+      return;
+    }
+
+    setLastCommandError((current) =>
+      current?.startsWith('UWP write window is still active') ? null : current
+    );
+  }, [isAlarmWriteWindowActive]);
 
   useEffect(() => {
     if (!metricsTopic.payload) {
@@ -853,9 +962,22 @@ export default function AccommodationRoom() {
   const isTemperaturePending = pendingCommands.temperatureValue !== undefined;
   const isSmokePending = pendingCommands.smokeDetected !== undefined;
   const isAlarmPending = pendingAlarmCommand !== null;
+  const isAlarmActionLocked = status !== 'connected' || isAlarmWriteWindowActive;
   const isAnyPending = isTemperaturePending || isSmokePending || isAlarmPending;
   const lastMetricsAt = metricsReceivedAt;
   const lastAlarmMetricsAt = alarmState.lastSignalAt ?? lastMetricsAt;
+  const latestAlarmRoundtripMs =
+    latestLatencySample?.requestTopicKey === 'gatewayOtCommand' &&
+    latestLatencySample.responseTopicKey === 'gatewayMetrics'
+      ? latestLatencySample.durationMs
+      : null;
+  const mqttLinkMeta = getMqttLinkMeta(status, latestAlarmRoundtripMs, isAlarmPending);
+  const writeWindowLabel = isAlarmWriteWindowActive
+    ? formatAlarmWriteWindow(alarmWriteWindowRemainingMs)
+    : 'Ready';
+  const writeWindowDetail = isAlarmWriteWindowActive
+    ? 'Waiting time for writing'
+    : 'Next edge can be sent';
 
   const heroSyncLabel = useMemo(() => {
     if (status !== 'connected') {
@@ -943,6 +1065,12 @@ export default function AccommodationRoom() {
       return lastCommandError;
     }
 
+    if (isAlarmWriteWindowActive) {
+      return `UWP write guard is active for ${formatAlarmWriteWindow(
+        alarmWriteWindowRemainingMs
+      )}. Repeated alarm writes can be ignored until it expires.`;
+    }
+
     if (pendingAlarmCommand) {
       return `${pendingAlarmCommand.requestedLabel} sent. Waiting for the next metrics response to confirm device state.`;
     }
@@ -956,15 +1084,33 @@ export default function AccommodationRoom() {
     }
 
     return 'Waiting for alarm metrics from the gateway.';
-  }, [lastAlarmMetricsAt, lastCommandError, pendingAlarmCommand, status]);
+  }, [
+    alarmWriteWindowRemainingMs,
+    isAlarmWriteWindowActive,
+    lastAlarmMetricsAt,
+    lastCommandError,
+    pendingAlarmCommand,
+    status,
+  ]);
 
   const alarmCommandHint = useMemo(() => {
     if (pendingAlarmCommand) {
+      if (isAlarmWriteWindowActive) {
+        return `Publishing ${pendingAlarmCommand.cmd} to device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}. Write window ${formatAlarmWriteWindow(alarmWriteWindowRemainingMs)}.`;
+      }
+
       return `Publishing ${pendingAlarmCommand.cmd} to device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}.`;
     }
 
-    return `last refreshed at ${formatEventTime(lastAlarmMetricsAt)}`;
-  }, [pendingAlarmCommand]);
+    return 'Pulse actions like Reset or Acknowledge are safest for repeated retries.';
+  }, [alarmWriteWindowRemainingMs, isAlarmWriteWindowActive, pendingAlarmCommand]);
+  const alarmBehaviorHint = useMemo(() => {
+    if (isAlarmWriteWindowActive) {
+      return `Wait the moment in ${ALARM_WRITE_GUARD_MS / 1000}s`;
+    }
+
+    return 'If ResetOn, ResetOff, TestAlarmOn, or TestAlarmOff seem ignored, create a new edge first or use pulse commands such as Reset and Acknowledge.';
+  }, [isAlarmWriteWindowActive]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -991,8 +1137,15 @@ export default function AccommodationRoom() {
           outputs={alarmState.outputs}
           hint={alarmHint}
           commandHint={alarmCommandHint}
+          behaviorHint={alarmBehaviorHint}
           isConnected={status === 'connected'}
+          isActionLocked={isAlarmActionLocked}
           isPending={isAlarmPending}
+          mqttLinkLabel={mqttLinkMeta.label}
+          mqttLinkDetail={mqttLinkMeta.detail}
+          mqttLinkTone={mqttLinkMeta.tone}
+          writeWindowLabel={writeWindowLabel}
+          writeWindowDetail={writeWindowDetail}
           onCommandPress={sendAlarmCommand}
         />
         <View style={styles.bottomSpacer} />
