@@ -71,6 +71,22 @@ export type CarloGavazziMetricsPayload = {
   devices: CarloGavazziMetricsDevice[];
 };
 
+export type AccommodationRoomZoneHeatingState = {
+  heatingControlAnalogueValue: number | null;
+  heatingControlAnalogueUnit: string;
+  heatingSetPointValue: number | null;
+  heatingSetPointUnit: string;
+  heatingControlStatusValue: number | null;
+  heatingControlStatusLabel: string;
+  heatingControlOn: boolean;
+  heatingSetPointSelectedValue: number | null;
+  heatingSetPointSelectedLabel: string;
+  heatingStatusValue: number | null;
+  heatingStatusLabel: string;
+  statusValue: number | null;
+  statusLabel: string;
+};
+
 export type MqttTopicPayloadMap = {
   gatewayHeartbeat: MqttFlexiblePayload;
   gatewayState: MqttFlexiblePayload;
@@ -114,6 +130,17 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
         sirenStatus: 'Siren status',
       },
     },
+    zoneTemperature: {
+      deviceId: 4147,
+      signalNames: {
+        heatingControlAnalogue: 'Heating control analogue signal',
+        heatingSetPoint: 'Heating set point signal',
+        heatingControlStatus: 'Heating control status signal',
+        heatingSetPointSelected: 'Heating set point selected signal',
+        heatingStatus: 'Heating status signal',
+        status: 'Status signal',
+      },
+    },
   },
 } as const;
 
@@ -128,6 +155,33 @@ export const ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS = [
   { code: 5 as const, label: 'Acknowledged, alarm was ON' },
   { code: 6 as const, label: 'Reset alarm' },
 ] as const;
+
+const ZONE_TEMPERATURE_HEATING_SET_POINT_SELECTION_LABELS: Record<number, string> = {
+  1: 'OFF',
+  2: 'SP1',
+  3: 'SP2',
+  4: 'SP3',
+};
+
+const ZONE_TEMPERATURE_HEATING_STATUS_LABELS: Record<number, string> = {
+  1: 'Control OFF',
+  2: 'Set Point 1',
+  3: 'Set Point 1',
+  4: 'Set Point 2',
+  5: 'Set Point 2',
+  6: 'Set Point 3',
+  7: 'Set Point 3',
+  8: 'Manual Set Point',
+  9: 'Manual Set Point',
+  10: 'Safe Mode',
+  11: 'Safe Mode',
+  12: 'Antifreeze',
+  13: 'Auxiliary',
+  14: 'Forced ON',
+  15: 'Antifreeze',
+  16: 'Forced OFF',
+  17: 'System Function',
+};
 
 function isValueCommand(cmd: CarloGavazziOtCommandName): cmd is CarloGavazziOtValueCommandName {
   return (VALUE_COMMANDS as readonly string[]).includes(cmd);
@@ -379,6 +433,26 @@ function getNumericSignalValue(signal: CarloGavazziMetricsSignal) {
   return null;
 }
 
+function getNumericSignalSnapshot(
+  payload: CarloGavazziMetricsPayload,
+  deviceId: number,
+  signalName: string
+) {
+  const signal = getCarloGavazziMetricsSignalByName(payload, deviceId, signalName);
+
+  if (!signal) {
+    return {
+      value: null,
+      unit: '',
+    };
+  }
+
+  return {
+    value: getNumericSignalValue(signal),
+    unit: signal.unit,
+  };
+}
+
 export function getCarloGavazziCounterNumericValue(
   payload: CarloGavazziMetricsPayload,
   deviceId: number,
@@ -440,6 +514,70 @@ export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPay
       temperatureNumber === null
         ? null
         : formatAccommodationTemperature(Math.round(temperatureNumber)),
+  };
+}
+
+function getBinarySignalLabel(value: number | null) {
+  if (value === null) {
+    return 'N/A';
+  }
+
+  return value >= 0.5 ? 'ON' : 'OFF';
+}
+
+function getHeatingSetPointSelectedLabel(value: number | null) {
+  if (value === null) {
+    return 'N/A';
+  }
+
+  return ZONE_TEMPERATURE_HEATING_SET_POINT_SELECTION_LABELS[Math.round(value)] ?? 'N/A';
+}
+
+function getHeatingStatusLabel(value: number | null) {
+  if (value === null) {
+    return 'N/A';
+  }
+
+  return ZONE_TEMPERATURE_HEATING_STATUS_LABELS[Math.round(value)] ?? 'N/A';
+}
+
+export function getAccommodationRoomZoneHeatingState(
+  payload: CarloGavazziMetricsPayload
+): AccommodationRoomZoneHeatingState {
+  const { deviceId, signalNames } = CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.zoneTemperature;
+  const heatingControlAnalogue = getNumericSignalSnapshot(
+    payload,
+    deviceId,
+    signalNames.heatingControlAnalogue
+  );
+  const heatingSetPoint = getNumericSignalSnapshot(payload, deviceId, signalNames.heatingSetPoint);
+  const heatingControlStatus = getNumericSignalSnapshot(
+    payload,
+    deviceId,
+    signalNames.heatingControlStatus
+  );
+  const heatingSetPointSelected = getNumericSignalSnapshot(
+    payload,
+    deviceId,
+    signalNames.heatingSetPointSelected
+  );
+  const heatingStatus = getNumericSignalSnapshot(payload, deviceId, signalNames.heatingStatus);
+  const statusSignal = getNumericSignalSnapshot(payload, deviceId, signalNames.status);
+
+  return {
+    heatingControlAnalogueValue: heatingControlAnalogue.value,
+    heatingControlAnalogueUnit: heatingControlAnalogue.unit,
+    heatingSetPointValue: heatingSetPoint.value,
+    heatingSetPointUnit: heatingSetPoint.unit,
+    heatingControlStatusValue: heatingControlStatus.value,
+    heatingControlStatusLabel: getBinarySignalLabel(heatingControlStatus.value),
+    heatingControlOn: heatingControlStatus.value !== null && heatingControlStatus.value >= 0.5,
+    heatingSetPointSelectedValue: heatingSetPointSelected.value,
+    heatingSetPointSelectedLabel: getHeatingSetPointSelectedLabel(heatingSetPointSelected.value),
+    heatingStatusValue: heatingStatus.value,
+    heatingStatusLabel: getHeatingStatusLabel(heatingStatus.value),
+    statusValue: statusSignal.value,
+    statusLabel: getBinarySignalLabel(statusSignal.value),
   };
 }
 

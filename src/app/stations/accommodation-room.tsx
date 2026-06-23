@@ -2,7 +2,7 @@ import { Slider } from '@expo/ui/community/slider';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
@@ -20,6 +20,8 @@ import {
   CARLO_GAVAZZI_GATEWAY_CONFIG,
   getAccommodationRoomAlarmState,
   getAccommodationRoomMetricsState,
+  getAccommodationRoomZoneHeatingState,
+  type AccommodationRoomZoneHeatingState,
   type CarloGavazziAlarmCommandName,
 } from '@/lib/mqtt-topics';
 import { useMqtt, useMqttTopic, type MqttConnectionState } from '@/providers/mqtt-provider';
@@ -100,6 +102,16 @@ function formatEventTime(timestamp: number | null) {
 
 function formatAlarmWriteWindow(milliseconds: number) {
   return `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
+}
+
+function formatZoneTemperatureMetric(value: number | null, unit: string) {
+  if (value === null) {
+    return 'N/A';
+  }
+
+  const normalizedValue = Number.isInteger(value) ? `${value}` : value.toFixed(1);
+
+  return unit ? `${normalizedValue} ${unit}` : normalizedValue;
 }
 
 function getMqttLinkMeta(
@@ -306,23 +318,90 @@ function AccommodationTemperatureField({
   confirmedValue,
   draftValue,
   hint,
+  heatingState,
   onChange,
 }: {
   confirmedValue: string;
   draftValue: string;
   hint: string;
+  heatingState: AccommodationRoomZoneHeatingState;
   onChange: (value: string) => void;
 }) {
   const confirmedTemperatureValue = parseAccommodationTemperature(confirmedValue);
   const draftTemperatureValue = parseAccommodationTemperature(draftValue);
   const signalTone = getAccommodationTemperatureSignalTone(confirmedTemperatureValue);
   const signalPalette = getSignalPalette(signalTone);
+  const [isHeatingDetailVisible, setIsHeatingDetailVisible] = useState(false);
+  const isHeatingOn = heatingState.heatingControlOn;
+  const heatingStatusSummary =
+    heatingState.heatingStatusValue === null
+      ? heatingState.heatingStatusLabel
+      : `${Math.round(heatingState.heatingStatusValue)} - ${heatingState.heatingStatusLabel}`;
+  const detailRows = [
+    {
+      label: 'Heating Control',
+      value: formatZoneTemperatureMetric(
+        heatingState.heatingControlAnalogueValue,
+        heatingState.heatingControlAnalogueUnit
+      ),
+    },
+    {
+      label: 'Heating Set Point',
+      value: formatZoneTemperatureMetric(
+        heatingState.heatingSetPointValue,
+        heatingState.heatingSetPointUnit
+      ),
+    },
+    {
+      label: 'Heating Control Status',
+      value: heatingState.heatingControlStatusLabel,
+    },
+    {
+      label: 'Set Point Selected',
+      value: heatingState.heatingSetPointSelectedLabel,
+    },
+    {
+      label: 'Heating Status',
+      value: heatingStatusSummary,
+    },
+    {
+      label: 'Status Signal',
+      value: heatingState.statusLabel,
+    },
+  ];
 
   return (
     <View style={styles.dashboardFieldBlock}>
       <View style={styles.dashboardControlCard}>
         <View style={styles.dashboardControlHeader}>
           <Text style={styles.fieldLabel}>Zone Temperature</Text>
+          
+          <View style={{
+            flexDirection: 'row',
+            justifyContent: 'space-evenly',
+            gap: 4,
+          }}>
+            {isHeatingOn ? (
+              <View
+            style={[
+              styles.signalValueChip,
+              {
+                backgroundColor: "#F4B7B7",
+                borderColor: "#f89498",
+              },
+            ]}>
+            <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={() => setIsHeatingDetailVisible(true)}
+                style={styles.heatingIndicatorButton}>
+                <MaterialCommunityIcons
+                  name="fire"
+                  size={14}
+                  color="#EF4444"
+                />
+              </TouchableOpacity>
+          </View>
+            ) : null}
           <View
             style={[
               styles.signalValueChip,
@@ -345,7 +424,38 @@ function AccommodationTemperatureField({
               {formatAccommodationTemperature(confirmedTemperatureValue)}
             </Text>
           </View>
+          </View>
         </View>
+
+        <Modal
+          animationType="fade"
+          transparent
+          visible={isHeatingDetailVisible}
+          onRequestClose={() => setIsHeatingDetailVisible(false)}>
+          <View style={styles.heatingDetailOverlay}>
+            <View style={styles.heatingDetailCard}>
+              <View style={styles.heatingDetailHeader}>
+                <View style={styles.heatingDetailTitleRow}>
+                  <MaterialCommunityIcons name="fire" size={18} color={AppColors.error} />
+                  <Text style={styles.heatingDetailTitle}>Heating Detail</Text>
+                </View>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => setIsHeatingDetailVisible(false)}
+                  style={styles.heatingDetailCloseButton}>
+                  <Feather name="x" size={18} color={AppColors.text} />
+                </TouchableOpacity>
+              </View>
+
+              {detailRows.map((row) => (
+                <View key={row.label} style={styles.heatingDetailRow}>
+                  <Text style={styles.heatingDetailLabel}>{row.label}</Text>
+                  <Text style={styles.heatingDetailValue}>{row.value}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </Modal>
 
         <View
           style={[
@@ -581,6 +691,7 @@ function AccommodationAlarmSection({
 function AccommodationSourceSection({
   confirmedForm,
   draftForm,
+  heatingState,
   smokeHint,
   temperatureHint,
   onSmokeChange,
@@ -588,6 +699,7 @@ function AccommodationSourceSection({
 }: {
   confirmedForm: AccommodationRoomInputs;
   draftForm: AccommodationRoomInputs;
+  heatingState: AccommodationRoomZoneHeatingState;
   smokeHint: string;
   temperatureHint: string;
   onSmokeChange: (value: boolean) => void;
@@ -611,6 +723,7 @@ function AccommodationSourceSection({
         confirmedValue={confirmedForm.temperatureValue}
         draftValue={draftForm.temperatureValue}
         hint={temperatureHint}
+        heatingState={heatingState}
         onChange={onTemperatureChange}
       />
     </View>
@@ -652,6 +765,27 @@ export default function AccommodationRoom() {
               ...item,
               active: false,
             })),
+          },
+    [metricsTopic.payload]
+  );
+  const zoneHeatingState = useMemo(
+    () =>
+      metricsTopic.payload
+        ? getAccommodationRoomZoneHeatingState(metricsTopic.payload)
+        : {
+            heatingControlAnalogueValue: null,
+            heatingControlAnalogueUnit: '%',
+            heatingSetPointValue: null,
+            heatingSetPointUnit: '°C',
+            heatingControlStatusValue: null,
+            heatingControlStatusLabel: 'N/A',
+            heatingControlOn: false,
+            heatingSetPointSelectedValue: null,
+            heatingSetPointSelectedLabel: 'N/A',
+            heatingStatusValue: null,
+            heatingStatusLabel: 'N/A',
+            statusValue: null,
+            statusLabel: 'N/A',
           },
     [metricsTopic.payload]
   );
@@ -1125,6 +1259,7 @@ export default function AccommodationRoom() {
         <AccommodationSourceSection
           confirmedForm={confirmedForm}
           draftForm={draftForm}
+          heatingState={zoneHeatingState}
           smokeHint={smokeHint}
           temperatureHint={temperatureHint}
           onSmokeChange={handleSmokeDetectedChange}
