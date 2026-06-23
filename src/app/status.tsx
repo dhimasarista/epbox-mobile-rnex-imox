@@ -319,7 +319,7 @@ export default function StatusScreen() {
                 </View>
 
                 <Text style={styles.topicPath}>{definition.topic}</Text>
-                <Text style={styles.topicDescription}>{definition.description}</Text>
+                {/* <Text style={styles.topicDescription}>{definition.description}</Text> */}
                 <Text style={styles.topicPayload}>
                   {latestMessage
                     ? formatTopicPayloadPreview(latestMessage.payload)

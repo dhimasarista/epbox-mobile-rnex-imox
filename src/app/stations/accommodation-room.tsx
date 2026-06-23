@@ -182,7 +182,7 @@ function AccommodationRoomHero({
       <View style={styles.heroTopRow}>
         <View style={styles.heroBadge}>
           <MaterialCommunityIcons name="bed-outline" size={14} color={AppColors.primary} />
-          <Text style={styles.heroBadgeText}>Accommodation Room</Text>
+          <Text style={styles.heroBadgeText}>{syncLabel}</Text>
         </View>
         <View style={styles.liveChip}>
           <View
@@ -191,11 +191,11 @@ function AccommodationRoomHero({
               { backgroundColor: isPending ? AppColors.warning : AppColors.success },
             ]}
           />
-          <Text style={styles.liveChipText}>{syncLabel}</Text>
+          <Text style={styles.liveChipText}>{syncHint}</Text>
         </View>
       </View>
 
-      <Text style={styles.heroSubtitle}>{syncHint}</Text>
+      <Text style={styles.heroSubtitle}>This room used for Inject Data to CG Gateway & PLC, please use value properly.</Text>
     </View>
   );
 }
@@ -296,7 +296,7 @@ function AccommodationToggleField({
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.dashboardControlHint}>{hint}</Text>
+        {/* <Text style={styles.dashboardControlHint}>{hint}</Text> */}
       </View>
     </View>
   );
@@ -468,7 +468,7 @@ function AccommodationAlarmSection({
   const alarmTone = getAccommodationAlarmTone(alarmStatusCode, sirenOn);
   const alarmPalette = getSignalPalette(alarmTone);
   const mqttLinkPalette = getSignalPalette(mqttLinkTone);
-  const sirenLabel = sirenOn === null ? 'Unknown' : sirenOn ? 'ON' : 'OFF';
+  const sirenLabel = sirenOn === null ? 'OFF' : sirenOn ? 'ON' : 'OFF';
   const alarmSummaryLabel =
     alarmStatusCode === null ? '-' : `${alarmStatusCode}. ${alarmStatusLabel}`;
 
@@ -493,15 +493,15 @@ function AccommodationAlarmSection({
           style={[
             styles.alarmSummaryChip,
             {
-              backgroundColor: sirenOn ? AppColors.surfaceError : AppColors.surfaceMuted,
-              borderColor: sirenOn ? '#F4B7B7' : AppColors.border,
+              backgroundColor: sirenOn ? AppColors.surfaceError : AppColors.surfaceSuccess,
+              borderColor: sirenOn ? '#F4B7B7' : '#9BD7B6',
             },
           ]}>
           <Text style={styles.alarmSummaryLabel}>Siren</Text>
           <Text
             style={[
               styles.alarmSummaryValue,
-              { color: sirenOn ? AppColors.error : AppColors.textSubtle },
+              { color: sirenOn ? AppColors.error : alarmPalette.text },
             ]}>
             {sirenLabel}
           </Text>
@@ -559,18 +559,18 @@ function AccommodationAlarmSection({
           disabled={!isConnected || isActionLocked}
           onPress={() => onCommandPress('ResetOff', 'Reset OFF')}
         />
-        <AlarmCommandButton
-          label="Test Alarm ON"
+        {/* <AlarmCommandButton
+          label="Alarm ON"
           tone="secondary"
           disabled={!isConnected || isActionLocked}
-          onPress={() => onCommandPress('TestAlarmOn', 'Test Alarm ON')}
+          onPress={() => onCommandPress('TestAlarmOn', 'Alarm ON')}
         />
         <AlarmCommandButton
-          label="Test Alarm OFF"
+          label="Alarm OFF"
           tone="secondary"
           disabled={!isConnected || isActionLocked}
-          onPress={() => onCommandPress('TestAlarmOff', 'Test Alarm OFF')}
-        />
+          onPress={() => onCommandPress('TestAlarmOff', 'Alarm OFF')}
+        /> */}
       </View>
 
       <Text style={styles.dashboardControlHint}>{commandHint}</Text>
@@ -645,7 +645,7 @@ export default function AccommodationRoom() {
         ? getAccommodationRoomAlarmState(metricsTopic.payload)
         : {
             alarmStatusCode: null,
-            alarmStatusLabel: 'Waiting',
+            alarmStatusLabel: 'OFF',
             sirenOn: null,
             lastSignalAt: null,
             outputs: ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS.map((item) => ({
@@ -984,7 +984,7 @@ export default function AccommodationRoom() {
       return 'Offline';
     }
 
-    return isAnyPending ? 'Loading' : 'Synced';
+    return isAnyPending ? 'Sync' : 'Synced';
   }, [isAnyPending, status]);
 
   const heroSyncHint = useMemo(() => {
@@ -993,18 +993,18 @@ export default function AccommodationRoom() {
     }
 
     if (status !== 'connected') {
-      return 'Displayed values stay on the last metrics response until MQTT reconnects.';
+      return '--:--:--';
     }
 
     if (isAnyPending) {
-      return 'Waiting metrics response';
+      return '99:99:99';
     }
 
     if (lastMetricsAt) {
-      return `Metrics response received at ${formatEventTime(lastMetricsAt)}.`;
+      return `${formatEventTime(lastMetricsAt)}`;
     }
 
-    return 'Waiting for the first metrics response from the gateway.';
+    return '00:00:00';
   }, [isAnyPending, lastCommandError, lastMetricsAt, status]);
 
   const smokeHint = useMemo(() => {
@@ -1096,10 +1096,10 @@ export default function AccommodationRoom() {
   const alarmCommandHint = useMemo(() => {
     if (pendingAlarmCommand) {
       if (isAlarmWriteWindowActive) {
-        return `Publishing ${pendingAlarmCommand.cmd} to device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}. Write window ${formatAlarmWriteWindow(alarmWriteWindowRemainingMs)}.`;
+        return `Write window ${formatAlarmWriteWindow(alarmWriteWindowRemainingMs)}.`;
       }
 
-      return `Publishing ${pendingAlarmCommand.cmd} to device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}.`;
+      return `${pendingAlarmCommand.cmd} to device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}.`;
     }
 
     return 'Pulse actions like Reset or Acknowledge are safest for repeated retries.';

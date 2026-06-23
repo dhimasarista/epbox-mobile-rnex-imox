@@ -1,3 +1,14 @@
+import {
+  DEFAULT_MQTT_CONNECTION_SETTINGS,
+  getMqttRuntimeTransportLabel,
+  getStoredMqttSettingsValue,
+  type MqttConnectionSettings,
+  setStoredMqttSettings,
+} from '@/lib/mqtt-settings';
+import { useAuth } from '@/providers/auth-provider';
+import { useMqtt } from '@/providers/mqtt-provider';
+import { AppColors } from '@/styles';
+import { styles } from '@/styles/screens/settings.styles';
 import { Feather } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import {
@@ -9,17 +20,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import {
-  DEFAULT_MQTT_CONNECTION_SETTINGS,
-  getMqttRuntimeTransportLabel,
-  getStoredMqttSettingsValue,
-  type MqttConnectionSettings,
-  setStoredMqttSettings,
-} from '@/lib/mqtt-settings';
-import { useMqtt } from '@/providers/mqtt-provider';
-import { useAuth } from '@/providers/auth-provider';
-import { AppColors } from '@/styles';
-import { styles } from '@/styles/screens/settings.styles';
 
 const FORM_FIELDS: {
   key: keyof MqttConnectionSettings;
@@ -153,7 +153,7 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.formTitle}>Broker Setup</Text>
             <Text style={styles.formDescription}>
-              Save broker host or URL. For Android preview, prefer the full {getMqttRuntimeTransportLabel('ws')} URL including path, for example `ws://host:port/mqtt`. Standalone build switches to {getMqttRuntimeTransportLabel('tcp')} when no protocol is written.
+              Save broker host or URL. For Android preview, prefer the full {getMqttRuntimeTransportLabel('ws')}.
             </Text>
           </View>
 
@@ -178,7 +178,7 @@ export default function SettingsScreen() {
           <View style={styles.statusCard}>
             <Feather name="hard-drive" size={16} color={AppColors.text} />
             <Text style={styles.statusText}>
-              {isLoading ? 'Loading saved MQTT configuration...' : statusMessage}
+              {isLoading ? 'Loading saved configuration...' : statusMessage}
             </Text>
           </View>
 
@@ -190,7 +190,7 @@ export default function SettingsScreen() {
               (pressed || isSaving) && styles.saveButtonPressed,
               (isLoading || isSaving) && styles.saveButtonDisabled,
             ]}>
-            <Text style={styles.saveButtonText}>{isSaving ? 'Saving...' : 'Save MQTT Configuration'}</Text>
+            <Text style={styles.saveButtonText}>{isSaving ? 'Saving...' : 'Save Configuration'}</Text>
           </Pressable>
         </View>
 

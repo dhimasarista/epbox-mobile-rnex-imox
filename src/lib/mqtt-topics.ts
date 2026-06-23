@@ -279,6 +279,72 @@ export function getCarloGavazziMetricsDevice(
   return payload.devices.find((device) => device.id === deviceId) ?? null;
 }
 
+export function mergeCarloGavazziMetricsPayload(
+  previousPayload: CarloGavazziMetricsPayload,
+  nextPayload: CarloGavazziMetricsPayload
+): CarloGavazziMetricsPayload {
+  const previousDeviceMap = new Map(previousPayload.devices.map((device) => [device.id, device]));
+  const mergedDevices: CarloGavazziMetricsDevice[] = previousPayload.devices.map((device) => ({
+    ...device,
+    signals: [...device.signals],
+  }));
+  const mergedDeviceIndex = new Map(mergedDevices.map((device, index) => [device.id, index]));
+
+  nextPayload.devices.forEach((nextDevice) => {
+    const previousDevice = previousDeviceMap.get(nextDevice.id);
+
+    if (!previousDevice) {
+      mergedDevices.push({
+        ...nextDevice,
+        signals: [...nextDevice.signals],
+      });
+      mergedDeviceIndex.set(nextDevice.id, mergedDevices.length - 1);
+      return;
+    }
+
+    const mergedSignals = [...previousDevice.signals];
+    const signalIndexByKey = new Map(
+      mergedSignals.map((signal, index) => [`${signal.id}:${signal.name}`, index])
+    );
+
+    nextDevice.signals.forEach((nextSignal) => {
+      const signalKey = `${nextSignal.id}:${nextSignal.name}`;
+      const existingIndex = signalIndexByKey.get(signalKey);
+
+      if (existingIndex === undefined) {
+        mergedSignals.push(nextSignal);
+        signalIndexByKey.set(signalKey, mergedSignals.length - 1);
+        return;
+      }
+
+      mergedSignals[existingIndex] = nextSignal;
+    });
+
+    const targetIndex = mergedDeviceIndex.get(nextDevice.id);
+
+    if (targetIndex === undefined) {
+      mergedDevices.push({
+        ...nextDevice,
+        signals: mergedSignals,
+      });
+      mergedDeviceIndex.set(nextDevice.id, mergedDevices.length - 1);
+      return;
+    }
+
+    mergedDevices[targetIndex] = {
+      ...previousDevice,
+      ...nextDevice,
+      signals: mergedSignals,
+    };
+  });
+
+  return {
+    ...previousPayload,
+    ...nextPayload,
+    devices: mergedDevices,
+  };
+}
+
 export function getCarloGavazziMetricsSignalByName(
   payload: CarloGavazziMetricsPayload,
   deviceId: number,

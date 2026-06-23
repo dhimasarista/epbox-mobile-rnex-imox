@@ -28,6 +28,7 @@ import {
 import {
   getMqttTopicDefinition,
   getMqttTopicDefinitionByPath,
+  mergeCarloGavazziMetricsPayload,
   MQTT_TOPIC_CATALOG,
   MQTT_TOPICS,
   type MqttTopicDefinition,
@@ -377,10 +378,29 @@ export function MqttProvider({ children }: PropsWithChildren) {
           const rawPayload = messageBuffer.toString();
           const payload = definition.parse(rawPayload);
 
-          setTopicMessages((currentMessages) => ({
-            ...currentMessages,
-            [definition.key]: createTopicMessage(definition, payload, rawPayload, 'broker'),
-          }));
+          setTopicMessages((currentMessages) => {
+            if (definition.key === 'gatewayMetrics') {
+              const previousMessage = currentMessages.gatewayMetrics;
+              const nextMetricsPayload = payload as MqttTopicPayloadMap['gatewayMetrics'];
+              const previousMetricsPayload = previousMessage?.payload as
+                | MqttTopicPayloadMap['gatewayMetrics']
+                | undefined;
+              const mergedPayload =
+                previousMetricsPayload && previousMessage?.source === 'broker'
+                  ? mergeCarloGavazziMetricsPayload(previousMetricsPayload, nextMetricsPayload)
+                  : nextMetricsPayload;
+
+              return {
+                ...currentMessages,
+                [definition.key]: createTopicMessage(definition, mergedPayload, rawPayload, 'broker'),
+              };
+            }
+
+            return {
+              ...currentMessages,
+              [definition.key]: createTopicMessage(definition, payload, rawPayload, 'broker'),
+            };
+          });
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : 'Unknown payload parsing error.';
