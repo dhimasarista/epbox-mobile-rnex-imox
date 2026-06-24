@@ -61,7 +61,14 @@ function getAccommodationTemperatureSignalTone(value: number): SignalTone {
   return 'normal';
 }
 
-function getAccommodationTemperatureLabel(tone: SignalTone) {
+function getAccommodationTemperatureLabel(
+  tone: SignalTone,
+  heatingStatusValue?: number | null
+) {
+  if (heatingStatusValue === 12) {
+    return 'Antifreeze Active';
+  }
+
   if (tone === 'danger') {
     return `Alarm >= ${ACCOMMODATION_TEMP_ALERT_C} C`;
   }
@@ -70,7 +77,7 @@ function getAccommodationTemperatureLabel(tone: SignalTone) {
     return `Watch >= ${ACCOMMODATION_TEMP_WARNING_C} C`;
   }
 
-  return 'Normal range';
+  return 'Normal Range';
 }
 
 function getAccommodationAlarmTone(
@@ -333,6 +340,7 @@ function AccommodationTemperatureField({
   const signalPalette = getSignalPalette(signalTone);
   const [isHeatingDetailVisible, setIsHeatingDetailVisible] = useState(false);
   const isHeatingOn = heatingState.heatingControlOn;
+  const isAntifreezeActive = heatingState.heatingStatusValue === 12;
   const heatingStatusSummary =
     heatingState.heatingStatusValue === null
       ? heatingState.heatingStatusLabel
@@ -484,17 +492,22 @@ function AccommodationTemperatureField({
           <View
             style={[
               styles.signalStateBadge,
-              {
-                backgroundColor: signalPalette.surface,
-                borderColor: signalPalette.border,
-              },
+              isAntifreezeActive
+                ? {
+                    backgroundColor: '#DBEAFE',
+                    borderColor: '#93C5FD',
+                  }
+                : {
+                    backgroundColor: signalPalette.surface,
+                    borderColor: signalPalette.border,
+                  },
             ]}>
             <Text
               style={[
                 styles.signalStateText,
-                { color: signalPalette.text },
+                { color: isAntifreezeActive ? AppColors.info : signalPalette.text },
               ]}>
-              {getAccommodationTemperatureLabel(signalTone)}
+              {getAccommodationTemperatureLabel(signalTone, heatingState.heatingStatusValue)}
             </Text>
           </View>
           <Text style={styles.sliderRangeText}>{ACCOMMODATION_TEMP_MAX_C} C</Text>
