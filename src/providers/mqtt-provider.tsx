@@ -276,7 +276,8 @@ export function MqttProvider({ children }: PropsWithChildren) {
       const definition = getMqttTopicDefinition(topicKey);
 
       if (!client || !client.connected) {
-        throw new Error(`MQTT is not connected. Unable to publish ${definition.label}.`);
+        // throw new Error(`MQTT is not connected. Unable to publish ${definition.label}.`);
+        throw new Error(`MQTT is not connected`);
       }
 
       const rawPayload = definition.serialize(payload);
@@ -552,9 +553,10 @@ export function useMqttTopic<TKey extends MqttTopicKey>(topicKey: TKey) {
   );
 }
 
-export { MQTT_TOPIC_CATALOG, MQTT_TOPICS };
 export type {
   MqttTopicDefinition,
   MqttTopicKey,
-  MqttTopicPayloadMap,
+  MqttTopicPayloadMap
 } from '@/lib/mqtt-topics';
+export { MQTT_TOPIC_CATALOG, MQTT_TOPICS };
+

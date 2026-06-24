@@ -1,12 +1,17 @@
 import { useNetworkSignal } from '@/hooks/use-network-signal';
 import { getMqttTransportLabel } from '@/lib/mqtt-settings';
-import { MQTT_TOPIC_CATALOG, useMqtt } from '@/providers/mqtt-provider';
+import {
+  CARLO_GAVAZZI_GATEWAY_CONFIG,
+  getZoneActivatedState,
+  type CarloGavazziSwitchCommandName,
+} from '@/lib/mqtt-topics';
+import { useMqtt, useMqttTopic } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { getBannerHeight, styles } from '@/styles/screens/home.styles';
-import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import LottieView from 'lottie-react-native';
-import { useCallback, useMemo, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -64,23 +69,113 @@ export default function HomeScreen() {
     refreshIntervalMs: 2000,
   });
 
-  const { endpointLabel, latestLatencySample } = useMqtt();
+  const { endpointLabel, latestLatencySample, publishTopic, status } = useMqtt();
   const brokerTransportLabel = getMqttTransportLabel(endpointLabel);
   const responseTimeValue = latestLatencySample?.durationMs ?? '--';
+
+  const { payload: metricsPayload } = useMqttTopic('gatewayMetrics');
+
+  const localZoneOn = metricsPayload
+    ? getZoneActivatedState(metricsPayload, CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId)
+    : null;
+  const remoteZoneOn = metricsPayload
+    ? getZoneActivatedState(metricsPayload, CARLO_GAVAZZI_GATEWAY_CONFIG.remoteZoneActivated.deviceId)
+    : null;
+
+  const connectionValue = localZoneOn === true ? 'Local' : remoteZoneOn === true ? 'Remote' : '--';
+
+  const [pendingZoneCmd, setPendingZoneCmd] = useState<{
+    cmd: CarloGavazziSwitchCommandName;
+    sentAt: number;
+  } | null>(null);
+  const [zoneFeedback, setZoneFeedback] = useState<'success' | 'error' | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearFeedbackTimer = useCallback(() => {
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+  }, []);
+
+  // Confirmed by metrics: expected value matches incoming main signal
+  useEffect(() => {
+    if (!pendingZoneCmd || localZoneOn === null) {
+      return;
+    }
+
+    const expectedOn = pendingZoneCmd.cmd === 'On';
+
+    if (localZoneOn === expectedOn) {
+      setPendingZoneCmd(null);
+      clearFeedbackTimer();
+      setZoneFeedback('success');
+      feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 2000);
+    }
+  }, [clearFeedbackTimer, localZoneOn, pendingZoneCmd]);
+
+  // Timeout: 8s without metrics confirmation → revert + error
+  useEffect(() => {
+    if (!pendingZoneCmd) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setPendingZoneCmd(null);
+      setZoneFeedback('error');
+      feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 3000);
+    }, 8000);
+
+    return () => clearTimeout(timer);
+  }, [pendingZoneCmd]);
+
+  // Clear pending when MQTT disconnects
+  useEffect(() => {
+    if (status !== 'connected') {
+      setPendingZoneCmd(null);
+    }
+  }, [status]);
+
+  // Cleanup on unmount
+  useEffect(() => () => clearFeedbackTimer(), [clearFeedbackTimer]);
+
+  // Optimistic display: show pending cmd direction while waiting
+  const displayedZoneOn =
+    pendingZoneCmd !== null ? pendingZoneCmd.cmd === 'On' : localZoneOn ?? false;
+
+  const handleLocalZoneToggle = useCallback(async () => {
+    if (status !== 'connected') {
+      return;
+    }
+
+    const nextCmd: CarloGavazziSwitchCommandName = displayedZoneOn ? 'Off' : 'On';
+
+    try {
+      await publishTopic(
+        'gatewayOtCommand',
+        { id: CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId, cmd: nextCmd },
+        { qos: 0, retain: false }
+      );
+      setPendingZoneCmd({ cmd: nextCmd, sentAt: Date.now() });
+      setZoneFeedback(null);
+    } catch {
+      setZoneFeedback('error');
+    }
+  }, [displayedZoneOn, publishTopic, status]);
 
   const statCards = useMemo<HomeStatCardConfig[]>(
     () => [
       {
-        title: 'Active Data\nStreams',
+        title: 'Local/Remote\nConnections',
         iconName: 'zap',
-        value: MQTT_TOPIC_CATALOG.length,
-        unit: 'Topics',
+        value: connectionValue,
+        unit: '',
       },
       {
         title: 'Broker\nProtocol',
         iconName: 'activity',
         value: brokerTransportLabel,
-        prefix: 'MQTT/',
+        unit: '/MQTT'
       },
       {
         title: 'Response\nTime',
@@ -95,7 +190,7 @@ export default function HomeScreen() {
         unit: 'Km',
       },
     ],
-    [brokerTransportLabel, responseTimeValue]
+    [brokerTransportLabel, connectionValue, responseTimeValue]
   );
 
   useFocusEffect(
@@ -124,13 +219,46 @@ export default function HomeScreen() {
             </View>
           </View>
           <View style={styles.headerIcons}>
-            <TouchableOpacity style={styles.iconBtn}>
+            {/* <TouchableOpacity style={styles.iconBtn}>
               <Ionicons name="notifications-outline" size={22} color={AppColors.text} />
               <View style={styles.notificationDot} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.iconBtn}>
               <MaterialCommunityIcons name="line-scan" size={22} color={AppColors.text} />
-            </TouchableOpacity>
+            </TouchableOpacity> */}
+            <View style={styles.localZoneToggleRow}>
+              <View
+                style={[
+                  styles.localZoneStatusDot,
+                  {
+                    backgroundColor:
+                      zoneFeedback === 'success'
+                        ? AppColors.success
+                        : zoneFeedback === 'error'
+                          ? AppColors.error
+                          : AppColors.border,
+                  },
+                ]}
+              />
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleLocalZoneToggle}
+                style={[
+                  styles.localZonePill,
+                  {
+                    backgroundColor: displayedZoneOn ? AppColors.primary : AppColors.borderStrong,
+                    opacity: pendingZoneCmd !== null ? 0.7 : 1,
+                  },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.localZoneThumb,
+                    { alignSelf: displayedZoneOn ? 'flex-end' : 'flex-start' },
+                  ]}
+                />
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 

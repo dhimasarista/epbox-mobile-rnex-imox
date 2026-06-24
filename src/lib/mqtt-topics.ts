@@ -27,6 +27,7 @@ export type CarloGavazziAlarmCommandName =
   | 'ResetOff'
   | 'TestAlarmOn'
   | 'TestAlarmOff';
+export type CarloGavazziSwitchCommandName = 'On' | 'Off' | 'OnTimeout' | 'OnOffToggle';
 export type CarloGavazziAlarmStatusCode = 1 | 2 | 3 | 4 | 5 | 6;
 
 export type CarloGavazziCounterCommandPayload =
@@ -43,9 +44,14 @@ export type CarloGavazziAlarmCommandPayload = {
   id: number;
   cmd: CarloGavazziAlarmCommandName;
 };
+export type CarloGavazziSwitchCommandPayload = {
+  id: number;
+  cmd: CarloGavazziSwitchCommandName;
+};
 export type CarloGavazziGatewayCommandPayload =
   | CarloGavazziCounterCommandPayload
-  | CarloGavazziAlarmCommandPayload;
+  | CarloGavazziAlarmCommandPayload
+  | CarloGavazziSwitchCommandPayload;
 
 export type CarloGavazziMetricsSignal = {
   id: number;
@@ -118,6 +124,12 @@ export type MqttTopicDefinition<TKey extends MqttTopicKey = MqttTopicKey> =
 // Keep gateway path and counter ids in one place so config changes stay easy.
 export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
   topicRoot: 'epbox/imox/demo/site/batam/edge/cg-uwp40-01',
+  localZoneActivated: {
+    deviceId: 3819,
+  },
+  remoteZoneActivated: {
+    deviceId: 3794,
+  },
   accommodationRoom: {
     counterIds: {
       smokeStatus: 3549,
@@ -629,4 +641,17 @@ export function getAccommodationRoomAlarmState(payload: CarloGavazziMetricsPaylo
       active: item.code === alarmStatusCode,
     })),
   };
+}
+
+export function getZoneActivatedState(
+  payload: CarloGavazziMetricsPayload,
+  deviceId: number
+): boolean | null {
+  const signal = getCarloGavazziMetricsSignalByName(payload, deviceId, 'Main signal');
+
+  if (!signal) {
+    return null;
+  }
+
+  return signal.value === 1;
 }
