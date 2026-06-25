@@ -69,11 +69,11 @@ export default function HomeScreen() {
     refreshIntervalMs: 2000,
   });
 
-  const { endpointLabel, latestLatencySample, publishTopic, status } = useMqtt();
+  const { endpointLabel, latestLatencySample, publishTopic, recordLatencySample, status } = useMqtt();
   const brokerTransportLabel = getMqttTransportLabel(endpointLabel);
   const responseTimeValue = latestLatencySample?.durationMs ?? '--';
 
-  const { payload: metricsPayload } = useMqttTopic('gatewayMetrics');
+  const { payload: metricsPayload, message: metricsMessage } = useMqttTopic('gatewayMetrics');
 
   const localZoneOn = metricsPayload
     ? getZoneActivatedState(metricsPayload, CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId)
@@ -86,6 +86,7 @@ export default function HomeScreen() {
 
   const [pendingZoneCmd, setPendingZoneCmd] = useState<{
     cmd: CarloGavazziSwitchCommandName;
+    requestedLabel: string;
     sentAt: number;
   } | null>(null);
   const [zoneFeedback, setZoneFeedback] = useState<'success' | 'error' | null>(null);
@@ -107,12 +108,19 @@ export default function HomeScreen() {
     const expectedOn = pendingZoneCmd.cmd === 'On';
 
     if (localZoneOn === expectedOn) {
+      recordLatencySample({
+        label: pendingZoneCmd.requestedLabel,
+        requestTopicKey: 'gatewayOtCommand',
+        responseTopicKey: 'gatewayMetrics',
+        startedAt: pendingZoneCmd.sentAt,
+        completedAt: metricsMessage?.receivedAt ?? Date.now(),
+      });
       setPendingZoneCmd(null);
       clearFeedbackTimer();
       setZoneFeedback('success');
       feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 2000);
     }
-  }, [clearFeedbackTimer, localZoneOn, pendingZoneCmd]);
+  }, [clearFeedbackTimer, localZoneOn, metricsMessage?.receivedAt, pendingZoneCmd, recordLatencySample]);
 
   // Timeout: 8s without metrics confirmation → revert + error
   useEffect(() => {
@@ -156,7 +164,11 @@ export default function HomeScreen() {
         { id: CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId, cmd: nextCmd },
         { qos: 0, retain: false }
       );
-      setPendingZoneCmd({ cmd: nextCmd, sentAt: Date.now() });
+      setPendingZoneCmd({
+        cmd: nextCmd,
+        requestedLabel: `Local Zone ${nextCmd}`,
+        sentAt: Date.now(),
+      });
       setZoneFeedback(null);
     } catch {
       setZoneFeedback('error');

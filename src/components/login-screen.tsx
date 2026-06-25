@@ -1,5 +1,4 @@
-import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -7,12 +6,18 @@ import { useAuth } from '@/providers/auth-provider';
 import { styles } from '@/styles/screens/login.styles';
 
 export default function LoginScreen() {
-  const router = useRouter();
   const { signIn, demoCredentials } = useAuth();
   const [userId, setUserId] = useState<string>(demoCredentials.id);
   const [password, setPassword] = useState<string>(demoCredentials.password);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const handleSignIn = async () => {
     try {
@@ -22,15 +27,19 @@ export default function LoginScreen() {
       const isSuccess = await signIn(userId, password);
 
       if (!isSuccess) {
-        setErrorMessage('ID atau password belum cocok dengan credential hardcoded saat ini.');
+        if (isMountedRef.current) {
+          setErrorMessage('ID atau password belum cocok dengan credential hardcoded saat ini.');
+        }
         return;
       }
-
-      router.replace('/');
     } catch {
-      Alert.alert('Login gagal', 'Session tidak bisa disimpan di perangkat ini.');
+      if (isMountedRef.current) {
+        Alert.alert('Login gagal', 'Session tidak bisa disimpan di perangkat ini.');
+      }
     } finally {
-      setIsSubmitting(false);
+      if (isMountedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   };
 
