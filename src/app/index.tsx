@@ -115,10 +115,14 @@ export default function HomeScreen() {
         startedAt: pendingZoneCmd.sentAt,
         completedAt: metricsMessage?.receivedAt ?? Date.now(),
       });
-      setPendingZoneCmd(null);
-      clearFeedbackTimer();
-      setZoneFeedback('success');
-      feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 2000);
+      const feedbackTimer = setTimeout(() => {
+        setPendingZoneCmd(null);
+        clearFeedbackTimer();
+        setZoneFeedback('success');
+        feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 2000);
+      }, 0);
+
+      return () => clearTimeout(feedbackTimer);
     }
   }, [clearFeedbackTimer, localZoneOn, metricsMessage?.receivedAt, pendingZoneCmd, recordLatencySample]);
 
@@ -140,7 +144,11 @@ export default function HomeScreen() {
   // Clear pending when MQTT disconnects
   useEffect(() => {
     if (status !== 'connected') {
-      setPendingZoneCmd(null);
+      const clearPendingTimer = setTimeout(() => {
+        setPendingZoneCmd(null);
+      }, 0);
+
+      return () => clearTimeout(clearPendingTimer);
     }
   }, [status]);
 

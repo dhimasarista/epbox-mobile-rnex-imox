@@ -590,10 +590,7 @@ function AccommodationAlarmSection({
 }) {
   const alarmTone = getAccommodationAlarmTone(alarmStatusCode, sirenOn);
   const alarmPalette = getSignalPalette(alarmTone);
-  const mqttLinkPalette = getSignalPalette(mqttLinkTone);
   const sirenLabel = sirenOn === null ? 'OFF' : sirenOn ? 'ON' : 'OFF';
-  const alarmSummaryLabel =
-    alarmStatusCode === null ? '-' : `${alarmStatusCode}. ${alarmStatusLabel}`;
 
   return (
     <View style={styles.sectionCard}>
@@ -918,12 +915,15 @@ export default function AccommodationRoom() {
       return;
     }
 
-    setAlarmClockNow(Date.now());
+    const initialTickId = setTimeout(() => {
+      setAlarmClockNow(Date.now());
+    }, 0);
     const intervalId = setInterval(() => {
       setAlarmClockNow(Date.now());
     }, 250);
 
     return () => {
+      clearTimeout(initialTickId);
       clearInterval(intervalId);
     };
   }, [isAlarmWriteWindowActive, pendingAlarmCommand]);
@@ -938,15 +938,22 @@ export default function AccommodationRoom() {
 
   useEffect(() => {
     if (status === 'connected') {
-      setLastCommandError((current) =>
-        current?.startsWith('MQTT disconnected') ? null : current
-      );
-      return;
+      const clearMqttErrorTimer = setTimeout(() => {
+        setLastCommandError((current) =>
+          current?.startsWith('MQTT disconnected') ? null : current
+        );
+      }, 0);
+
+      return () => clearTimeout(clearMqttErrorTimer);
     }
 
     clearTemperatureDebounce();
-    setPendingCommands({});
-    setPendingAlarmCommand(null);
+    const clearPendingTimer = setTimeout(() => {
+      setPendingCommands({});
+      setPendingAlarmCommand(null);
+    }, 0);
+
+    return () => clearTimeout(clearPendingTimer);
   }, [clearTemperatureDebounce, status]);
 
   useEffect(() => {
@@ -954,9 +961,13 @@ export default function AccommodationRoom() {
       return;
     }
 
-    setLastCommandError((current) =>
-      current?.startsWith('UWP write window is still active') ? null : current
-    );
+    const clearWriteWindowErrorTimer = setTimeout(() => {
+      setLastCommandError((current) =>
+        current?.startsWith('UWP write window is still active') ? null : current
+      );
+    }, 0);
+
+    return () => clearTimeout(clearWriteWindowErrorTimer);
   }, [isAlarmWriteWindowActive]);
 
   useEffect(() => {
@@ -979,73 +990,77 @@ export default function AccommodationRoom() {
       nextSmokeMetricValue !== null &&
       pendingCommands.smokeDetected.expectedMetricValue === nextSmokeMetricValue;
 
-    if (metricsState.temperatureValue !== null || metricsState.smokeDetected !== null) {
-      setConfirmedForm((current) => {
-        const next = { ...current };
+    const processMetricsTimer = setTimeout(() => {
+      if (metricsState.temperatureValue !== null || metricsState.smokeDetected !== null) {
+        setConfirmedForm((current) => {
+          const next = { ...current };
 
-        if (metricsState.temperatureValue !== null) {
-          next.temperatureValue = metricsState.temperatureValue;
-        }
+          if (metricsState.temperatureValue !== null) {
+            next.temperatureValue = metricsState.temperatureValue;
+          }
 
-        if (metricsState.smokeDetected !== null) {
-          next.smokeDetected = metricsState.smokeDetected;
-        }
+          if (metricsState.smokeDetected !== null) {
+            next.smokeDetected = metricsState.smokeDetected;
+          }
 
-        return next;
-      });
+          return next;
+        });
 
-      setDraftForm((current) => {
-        const next = { ...current };
+        setDraftForm((current) => {
+          const next = { ...current };
 
-        if (
-          metricsState.temperatureValue !== null &&
-          (!pendingCommands.temperatureValue || temperatureAcked)
-        ) {
-          next.temperatureValue = metricsState.temperatureValue;
-        }
+          if (
+            metricsState.temperatureValue !== null &&
+            (!pendingCommands.temperatureValue || temperatureAcked)
+          ) {
+            next.temperatureValue = metricsState.temperatureValue;
+          }
 
-        if (metricsState.smokeDetected !== null && (!pendingCommands.smokeDetected || smokeAcked)) {
-          next.smokeDetected = metricsState.smokeDetected;
-        }
+          if (metricsState.smokeDetected !== null && (!pendingCommands.smokeDetected || smokeAcked)) {
+            next.smokeDetected = metricsState.smokeDetected;
+          }
 
-        return next;
-      });
-    }
-
-    if (temperatureAcked || smokeAcked) {
-      const ackedCommands = [
-        temperatureAcked ? pendingCommands.temperatureValue ?? null : null,
-        smokeAcked ? pendingCommands.smokeDetected ?? null : null,
-      ]
-        .filter((command): command is PendingCounterCommand => command !== null)
-        .sort((left, right) => left.sentAt - right.sentAt);
-      const latestAckedCommand = ackedCommands[ackedCommands.length - 1] ?? null;
-
-      if (latestAckedCommand) {
-        recordLatencySample({
-          label: latestAckedCommand.requestedLabel,
-          requestTopicKey: 'gatewayOtCommand',
-          responseTopicKey: 'gatewayMetrics',
-          startedAt: latestAckedCommand.sentAt,
-          completedAt: metricsReceivedAt ?? Date.now(),
+          return next;
         });
       }
 
-      setPendingCommands((current) => {
-        const next = { ...current };
+      if (temperatureAcked || smokeAcked) {
+        const ackedCommands = [
+          temperatureAcked ? pendingCommands.temperatureValue ?? null : null,
+          smokeAcked ? pendingCommands.smokeDetected ?? null : null,
+        ]
+          .filter((command): command is PendingCounterCommand => command !== null)
+          .sort((left, right) => left.sentAt - right.sentAt);
+        const latestAckedCommand = ackedCommands[ackedCommands.length - 1] ?? null;
 
-        if (temperatureAcked) {
-          delete next.temperatureValue;
+        if (latestAckedCommand) {
+          recordLatencySample({
+            label: latestAckedCommand.requestedLabel,
+            requestTopicKey: 'gatewayOtCommand',
+            responseTopicKey: 'gatewayMetrics',
+            startedAt: latestAckedCommand.sentAt,
+            completedAt: metricsReceivedAt ?? Date.now(),
+          });
         }
 
-        if (smokeAcked) {
-          delete next.smokeDetected;
-        }
+        setPendingCommands((current) => {
+          const next = { ...current };
 
-        return next;
-      });
-      setLastCommandError(null);
-    }
+          if (temperatureAcked) {
+            delete next.temperatureValue;
+          }
+
+          if (smokeAcked) {
+            delete next.smokeDetected;
+          }
+
+          return next;
+        });
+        setLastCommandError(null);
+      }
+    }, 0);
+
+    return () => clearTimeout(processMetricsTimer);
   }, [metricsReceivedAt, metricsTopic.payload, pendingCommands, recordLatencySample]);
 
   useEffect(() => {
@@ -1064,8 +1079,12 @@ export default function AccommodationRoom() {
         startedAt: pendingAlarmCommand.sentAt,
         completedAt: metricsReceivedAt ?? Date.now(),
       });
-      setPendingAlarmCommand(null);
-      setLastCommandError(null);
+      const clearAlarmPendingTimer = setTimeout(() => {
+        setPendingAlarmCommand(null);
+        setLastCommandError(null);
+      }, 0);
+
+      return () => clearTimeout(clearAlarmPendingTimer);
     }
   }, [alarmState.lastSignalAt, metricsReceivedAt, pendingAlarmCommand, recordLatencySample]);
 

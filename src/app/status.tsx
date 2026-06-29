@@ -5,9 +5,6 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-  hasMqttConnectionSettings
-} from '@/lib/mqtt-settings';
-import {
   MQTT_TOPIC_CATALOG,
   useMqtt,
   type MqttConnectionState,
@@ -156,13 +153,9 @@ export default function StatusScreen() {
     disconnect,
     endpointLabel,
     isSettingsLoading,
-    lastError,
-    lastConnectedAt,
     logs,
     refreshSettings,
-    settings,
     status,
-    statusMessage,
     topicMessages,
   } = useMqtt();
   const [activeLogFilter, setActiveLogFilter] = useState<LogFilter>('all');
@@ -189,7 +182,6 @@ export default function StatusScreen() {
   }, [connectedAt]);
 
   const statusMeta = MQTT_STATUS_META[status];
-  const hasSettings = hasMqttConnectionSettings(settings);
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
   const actionLabel = isConnecting
@@ -209,20 +201,7 @@ export default function StatusScreen() {
         accent: '#3B82F6',
       },
     ],
-    [
-      connectedAt,
-      endpointLabel,
-      hasSettings,
-      isConnected,
-      isSettingsLoading,
-      lastConnectedAt,
-      lastError,
-      nowTimestamp,
-      settings,
-      statusMessage,
-      statusMeta.accent,
-      statusMeta.label,
-    ]
+    [connectedAt, isConnected, nowTimestamp]
   );
 
   const filteredLogs = useMemo(
