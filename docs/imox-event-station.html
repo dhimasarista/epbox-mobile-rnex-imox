@@ -1,0 +1,821 @@
+<title>IMOX Event Station — IO Panel</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ─── Tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --bg:           #080E1A;
+  --bg-grid:      rgba(34,211,238,0.03);
+  --surface:      #0D1829;
+  --panel:        #111E33;
+  --card:         #162540;
+  --border:       #1A3050;
+  --border-soft:  #132240;
+
+  --accent:       #22D3EE;
+  --accent-glow:  rgba(34,211,238,0.18);
+  --accent-dim:   #0891B2;
+
+  --success:      #10B981;
+  --success-bg:   rgba(16,185,129,0.12);
+  --success-border: rgba(16,185,129,0.28);
+
+  --warning:      #F59E0B;
+  --warning-bg:   rgba(245,158,11,0.12);
+  --warning-border: rgba(245,158,11,0.28);
+
+  --danger:       #EF4444;
+  --danger-bg:    rgba(239,68,68,0.12);
+  --danger-border: rgba(239,68,68,0.28);
+
+  --info:         #60A5FA;
+  --info-bg:      rgba(96,165,250,0.10);
+  --info-border:  rgba(96,165,250,0.24);
+
+  --text:         #D8E8F2;
+  --text-muted:   #6E90AB;
+  --text-subtle:  #394F65;
+
+  --on-color: #FFFFFF;
+
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  16px;
+  --radius-xl:  20px;
+  --radius-pill: 999px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:           #EEF2F7;
+    --bg-grid:      rgba(2,132,199,0.03);
+    --surface:      #FFFFFF;
+    --panel:        #F1F5F9;
+    --card:         #FFFFFF;
+    --border:       #CBD5E1;
+    --border-soft:  #E2E8F0;
+
+    --accent:       #0284C7;
+    --accent-glow:  rgba(2,132,199,0.12);
+    --accent-dim:   #0369A1;
+
+    --success:      #059669;
+    --success-bg:   rgba(5,150,105,0.08);
+    --success-border: rgba(5,150,105,0.22);
+
+    --warning:      #D97706;
+    --warning-bg:   rgba(217,119,6,0.08);
+    --warning-border: rgba(217,119,6,0.22);
+
+    --danger:       #DC2626;
+    --danger-bg:    rgba(220,38,38,0.08);
+    --danger-border: rgba(220,38,38,0.22);
+
+    --info:         #2563EB;
+    --info-bg:      rgba(37,99,235,0.07);
+    --info-border:  rgba(37,99,235,0.18);
+
+    --text:         #0A1929;
+    --text-muted:   #475569;
+    --text-subtle:  #94A3B8;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:           #080E1A;
+  --bg-grid:      rgba(34,211,238,0.03);
+  --surface:      #0D1829;
+  --panel:        #111E33;
+  --card:         #162540;
+  --border:       #1A3050;
+  --border-soft:  #132240;
+  --accent:       #22D3EE;
+  --accent-glow:  rgba(34,211,238,0.18);
+  --accent-dim:   #0891B2;
+  --success:      #10B981;
+  --success-bg:   rgba(16,185,129,0.12);
+  --success-border: rgba(16,185,129,0.28);
+  --warning:      #F59E0B;
+  --warning-bg:   rgba(245,158,11,0.12);
+  --warning-border: rgba(245,158,11,0.28);
+  --danger:       #EF4444;
+  --danger-bg:    rgba(239,68,68,0.12);
+  --danger-border: rgba(239,68,68,0.28);
+  --info:         #60A5FA;
+  --info-bg:      rgba(96,165,250,0.10);
+  --info-border:  rgba(96,165,250,0.24);
+  --text:         #D8E8F2;
+  --text-muted:   #6E90AB;
+  --text-subtle:  #394F65;
+}
+
+:root[data-theme="light"] {
+  --bg:           #EEF2F7;
+  --bg-grid:      rgba(2,132,199,0.03);
+  --surface:      #FFFFFF;
+  --panel:        #F1F5F9;
+  --card:         #FFFFFF;
+  --border:       #CBD5E1;
+  --border-soft:  #E2E8F0;
+  --accent:       #0284C7;
+  --accent-glow:  rgba(2,132,199,0.12);
+  --accent-dim:   #0369A1;
+  --success:      #059669;
+  --success-bg:   rgba(5,150,105,0.08);
+  --success-border: rgba(5,150,105,0.22);
+  --warning:      #D97706;
+  --warning-bg:   rgba(217,119,6,0.08);
+  --warning-border: rgba(217,119,6,0.22);
+  --danger:       #DC2626;
+  --danger-bg:    rgba(220,38,38,0.08);
+  --danger-border: rgba(220,38,38,0.22);
+  --info:         #2563EB;
+  --info-bg:      rgba(37,99,235,0.07);
+  --info-border:  rgba(37,99,235,0.18);
+  --text:         #0A1929;
+  --text-muted:   #475569;
+  --text-subtle:  #94A3B8;
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  background-image:
+    linear-gradient(var(--bg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Top bar ─────────────────────────────────────────────────────────── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  padding: 0 24px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.topbar-sep { color: var(--text-subtle); font-size: 13px; }
+
+.topbar-sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.topbar-spacer { flex: 1; }
+
+.plc-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.plc-badge .dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+.theme-btn {
+  width: 32px; height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.theme-btn:hover { background: var(--card); color: var(--text); }
+
+/* ─── Shell ──────────────────────────────────────────────────────────── */
+.shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+/* ─── Station header ─────────────────────────────────────────────────── */
+.station-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.station-id {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+}
+
+.station-name {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--text);
+  text-wrap: balance;
+  line-height: 1.1;
+}
+
+.station-desc {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  max-width: 520px;
+}
+
+.io-summary {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.io-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  min-width: 88px;
+}
+
+.io-tile-num {
+  font-size: 26px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.io-tile-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+
+.io-tile-sub {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-subtle);
+}
+
+.io-tile.di .io-tile-num { color: var(--info); }
+.io-tile.di { border-color: var(--info-border); background: var(--info-bg); }
+
+.io-tile.do .io-tile-num { color: var(--accent); }
+.io-tile.do { border-color: var(--accent-glow); }
+
+/* ─── Grid ───────────────────────────────────────────────────────────── */
+.io-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 760px) {
+  .io-grid { grid-template-columns: 1fr; }
+}
+
+/* ─── Panel card ─────────────────────────────────────────────────────── */
+.panel-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--panel);
+}
+
+.panel-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-stripe {
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.panel-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.badge-di {
+  background: var(--info-bg);
+  color: var(--info);
+  border: 1px solid var(--info-border);
+}
+
+.badge-do {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border: 1px solid rgba(34,211,238,0.3);
+}
+
+/* ─── DI rows ────────────────────────────────────────────────────────── */
+.di-list { display: flex; flex-direction: column; }
+
+.di-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  transition: background 0.1s;
+  user-select: none;
+}
+.di-row:last-child { border-bottom: none; }
+.di-row:hover { background: var(--panel); }
+
+.ch-num {
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+  width: 18px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.di-led {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--border);
+  border: 1.5px solid var(--border);
+  transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+
+.di-row.active .di-led {
+  background: var(--success);
+  border-color: var(--success);
+  box-shadow: 0 0 7px var(--success);
+}
+
+.di-row.danger .di-led {
+  background: var(--danger);
+  border-color: var(--danger);
+  box-shadow: 0 0 8px var(--danger);
+  animation: blink 0.8s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
+.di-label {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s;
+}
+.di-row.active .di-label,
+.di-row.danger .di-label { color: var(--text); }
+
+.contact-tag {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text-subtle);
+  border: 1px solid var(--border-soft);
+  font-family: ui-monospace, monospace;
+  flex-shrink: 0;
+}
+
+.di-value {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--panel);
+  color: var(--text-subtle);
+  border: 1px solid var(--border-soft);
+  min-width: 52px;
+  text-align: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.di-row.active .di-value {
+  background: var(--success-bg);
+  color: var(--success);
+  border-color: var(--success-border);
+}
+
+.di-row.danger .di-value {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+
+/* ─── DO rows ────────────────────────────────────────────────────────── */
+.do-list { display: flex; flex-direction: column; gap: 0; }
+
+.do-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  transition: background 0.1s;
+}
+.do-row:last-child { border-bottom: none; }
+
+.do-row.on { background: var(--panel); }
+
+.do-label {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.15s;
+}
+.do-row.on .do-label { color: var(--text); }
+
+.do-indicator {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--border);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+/* toggle */
+.toggle-wrap {
+  position: relative;
+  width: 48px; height: 26px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.toggle-wrap input {
+  position: absolute;
+  opacity: 0; width: 0; height: 0;
+}
+
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 13px;
+  background: var(--panel);
+  border: 1.5px solid var(--border);
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+  transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1), background 0.2s;
+}
+
+.toggle-wrap input:checked + .toggle-track { border-color: currentColor; }
+.toggle-wrap input:checked ~ .toggle-thumb { transform: translateX(22px); background: var(--on-color); }
+
+/* per-type accent */
+.do-row.type-valve   .toggle-wrap input:checked + .toggle-track { background: var(--success-bg); border-color: var(--success); }
+.do-row.type-valve   .do-indicator.on { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.do-row.type-valve   .toggle-wrap { color: var(--success); }
+
+.do-row.type-pump    .toggle-wrap input:checked + .toggle-track { background: var(--success-bg); border-color: var(--success); }
+.do-row.type-pump    .do-indicator.on { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.do-row.type-pump    .toggle-wrap { color: var(--success); }
+
+.do-row.type-buzzer  .toggle-wrap input:checked + .toggle-track { background: var(--warning-bg); border-color: var(--warning); }
+.do-row.type-buzzer  .do-indicator.on { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
+.do-row.type-buzzer  .toggle-wrap { color: var(--warning); }
+
+.do-row.type-lamp    .toggle-wrap input:checked + .toggle-track { background: var(--accent-glow); border-color: var(--accent); }
+.do-row.type-lamp    .do-indicator.on { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.do-row.type-lamp    .toggle-wrap { color: var(--accent); }
+
+/* ─── Slot tag ───────────────────────────────────────────────────────── */
+.slot-tag {
+  font-size: 9px;
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text-subtle);
+  border: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+
+/* ─── Footer hint ────────────────────────────────────────────────────── */
+.panel-footer {
+  padding: 10px 18px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--panel);
+  font-size: 10px;
+  color: var(--text-subtle);
+  font-style: italic;
+}
+
+/* ─── Focus visible ──────────────────────────────────────────────────── */
+.di-row:focus-visible,
+.toggle-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ─── Reduced motion ─────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .dot, .di-row.danger .di-led { animation: none; }
+  .toggle-thumb { transition: none; }
+}
+</style>
+
+<!-- Topbar -->
+<div class="topbar">
+  <span class="topbar-title">IMOX Event</span>
+  <span class="topbar-sep">/</span>
+  <span class="topbar-sub">IE-001 · Engine Room</span>
+  <div class="topbar-spacer"></div>
+  <div class="plc-badge">
+    <span class="dot"></span>
+    S7-1200
+  </div>
+  <button class="theme-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">☀</button>
+</div>
+
+<div class="shell">
+
+  <!-- Station header -->
+  <div class="station-header">
+    <div>
+      <div class="station-id">IE-001 · MV Southern Maori · Engine Room</div>
+      <h1 class="station-name">IMOX Event Station</h1>
+      <p class="station-desc">
+        PLC Siemens S7-1200 via Carlo Gavazzi UWP-40 gateway.
+        DI channels carry physical sensor states from the PLC — read only.
+        DO channels send boolean commands back through the gateway.
+      </p>
+    </div>
+    <div class="io-summary">
+      <div class="io-tile di">
+        <span class="io-tile-num">12</span>
+        <span class="io-tile-label">Digital Input</span>
+        <span class="io-tile-sub">Read only</span>
+      </div>
+      <div class="io-tile do">
+        <span class="io-tile-num">12</span>
+        <span class="io-tile-label">Digital Output</span>
+        <span class="io-tile-sub">Writable</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- IO grid -->
+  <div class="io-grid">
+
+    <!-- ── DI Panel ── -->
+    <div class="panel-card">
+      <div class="panel-header">
+        <div class="panel-header-left">
+          <div class="panel-stripe" style="background:var(--info)"></div>
+          <span class="panel-title">Digital Input</span>
+        </div>
+        <span class="panel-badge badge-di">READ ONLY</span>
+      </div>
+
+      <div class="di-list" id="diList">
+        <!-- rows injected by JS -->
+      </div>
+
+      <div class="panel-footer">Click any row to simulate DI state · Production values arrive via MQTT metrics</div>
+    </div>
+
+    <!-- ── DO Panel ── -->
+    <div class="panel-card">
+      <div class="panel-header">
+        <div class="panel-header-left">
+          <div class="panel-stripe" style="background:var(--accent)"></div>
+          <span class="panel-title">Digital Output</span>
+        </div>
+        <span class="panel-badge badge-do">WRITABLE</span>
+      </div>
+
+      <div class="do-list" id="doList">
+        <!-- rows injected by JS -->
+      </div>
+
+      <div class="panel-footer">Toggle sends boolean command to gateway OT command topic · QoS 0 · retain false</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+/* ─── Data ─────────────────────────────────────────────────────────────── */
+const DI = [
+  { ch:1,  slot:1, key:'emergencyStop',       label:'Emergency Stop',          ct:'NC', isDanger:true  },
+  { ch:2,  slot:1, key:'btnStartPumpA',       label:'Button – Start Pump A',   ct:'NO', isDanger:false },
+  { ch:3,  slot:1, key:'btnStopPumpA',        label:'Button – Stop Pump A',    ct:'NC', isDanger:false },
+  { ch:4,  slot:1, key:'btnStartPumpB',       label:'Button – Start Pump B',   ct:'NO', isDanger:false },
+  { ch:5,  slot:1, key:'btnStopPumpB',        label:'Button – Stop Pump B',    ct:'NC', isDanger:false },
+  { ch:6,  slot:1, key:'btnZoneRelease',      label:'Button – Zone Release',   ct:'NO', isDanger:false },
+  { ch:7,  slot:1, key:'selectorLR',          label:'Selector Local / Remote', ct:'NO', isDanger:false },
+  { ch:8,  slot:1, key:'r3PumpARunning',      label:'R3 – Pump A Status',      ct:'NO', isDanger:false },
+  { ch:9,  slot:1, key:'r4PumpBRunning',      label:'R4 – Pump B Status',      ct:'NO', isDanger:false },
+  { ch:10, slot:1, key:'r5PumpCRunning',      label:'R5 – Pump C Status',      ct:'NO', isDanger:false },
+  { ch:11, slot:1, key:'levelSwitchLow',      label:'Level Switch – Low Tank', ct:'NO', isDanger:false },
+  { ch:12, slot:1, key:'flowSwitch',          label:'Flow Switch',             ct:'NO', isDanger:false },
+];
+
+const DO = [
+  { ch:1,  slot:1, key:'solenoidValve1',   label:'R1 – Solenoid Valve 1 Open', type:'valve'  },
+  { ch:2,  slot:1, key:'solenoidValve2',   label:'R2 – Solenoid Valve 2 Open', type:'valve'  },
+  { ch:3,  slot:1, key:'r3PumpAStart',     label:'R3 – Pump A Start',          type:'pump'   },
+  { ch:4,  slot:1, key:'r4PumpBStart',     label:'R4 – Pump B Start',          type:'pump'   },
+  { ch:5,  slot:1, key:'r5PumpCStart',     label:'R5 – Pump C Start',          type:'pump'   },
+  { ch:6,  slot:1, key:'buzzer',           label:'Buzzer',                     type:'buzzer' },
+  { ch:7,  slot:1, key:'lampZoneRelease',  label:'Lamp – Zone Release',        type:'lamp'   },
+  { ch:8,  slot:1, key:'lampPumpARunning', label:'Lamp – Pump A Running',      type:'lamp'   },
+  { ch:9,  slot:1, key:'lampPumpAStopped', label:'Lamp – Pump A Stopped',      type:'lamp'   },
+  { ch:10, slot:1, key:'lampPumpBRunning', label:'Lamp – Pump B Running',      type:'lamp'   },
+  { ch:1,  slot:2, key:'lampPumpBStopped', label:'Lamp – Pump B Stopped',      type:'lamp'   },
+  { ch:2,  slot:2, key:'lampLocalRemote',  label:'Lamp – Local / Remote',      type:'lamp'   },
+];
+
+/* ─── State ─────────────────────────────────────────────────────────────── */
+const diState = Object.fromEntries(DI.map(d => [d.key, false]));
+const doState = Object.fromEntries(DO.map(d => [d.key, false]));
+
+/* ─── Render DI ─────────────────────────────────────────────────────────── */
+function renderDI() {
+  const list = document.getElementById('diList');
+  list.innerHTML = '';
+  DI.forEach(ch => {
+    const active = diState[ch.key];
+    const cls = active ? (ch.isDanger ? 'danger' : 'active') : '';
+
+    const row = document.createElement('div');
+    row.className = `di-row ${cls}`;
+    row.setAttribute('role', 'button');
+    row.setAttribute('tabindex', '0');
+    row.setAttribute('aria-pressed', String(active));
+    row.setAttribute('title', `Toggle ${ch.label}`);
+
+    row.innerHTML = `
+      <span class="ch-num">${String(ch.ch).padStart(2,'0')}</span>
+      <span class="di-led"></span>
+      <span class="di-label">${ch.label}</span>
+      <span class="contact-tag">${ch.ct}</span>
+      <span class="slot-tag">S${ch.slot}</span>
+      <span class="di-value">${active ? 'TRUE' : 'FALSE'}</span>
+    `;
+
+    row.addEventListener('click', () => {
+      diState[ch.key] = !diState[ch.key];
+      renderDI();
+    });
+    row.addEventListener('keydown', e => {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); row.click(); }
+    });
+
+    list.appendChild(row);
+  });
+}
+
+/* ─── Render DO ─────────────────────────────────────────────────────────── */
+function renderDO() {
+  const list = document.getElementById('doList');
+  list.innerHTML = '';
+  DO.forEach((ch, i) => {
+    const on = doState[ch.key];
+
+    const row = document.createElement('div');
+    row.className = `do-row type-${ch.type} ${on ? 'on' : ''}`;
+
+    const toggleId = `toggle-${ch.key}`;
+    row.innerHTML = `
+      <span class="ch-num">${String(ch.ch).padStart(2,'0')}</span>
+      <span class="do-indicator ${on ? 'on' : ''}"></span>
+      <span class="do-label">${ch.label}</span>
+      <span class="slot-tag">S${ch.slot}</span>
+      <label class="toggle-wrap" for="${toggleId}" title="${on ? 'ON — click to turn OFF' : 'OFF — click to turn ON'}">
+        <input type="checkbox" id="${toggleId}" ${on ? 'checked' : ''} aria-label="${ch.label}">
+        <span class="toggle-track"></span>
+        <span class="toggle-thumb"></span>
+      </label>
+    `;
+
+    const input = row.querySelector('input');
+    input.addEventListener('change', () => {
+      doState[ch.key] = input.checked;
+      renderDO();
+    });
+
+    list.appendChild(row);
+  });
+}
+
+/* ─── Theme toggle ───────────────────────────────────────────────────────── */
+(function() {
+  const btn = document.getElementById('themeBtn');
+  const root = document.documentElement;
+  let dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+  function apply() {
+    root.setAttribute('data-theme', dark ? 'dark' : 'light');
+    btn.textContent = dark ? '☀' : '☾';
+    btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+  }
+  apply();
+
+  btn.addEventListener('click', () => { dark = !dark; apply(); });
+})();
+
+/* ─── Init ─────────────────────────────────────────────────────────────── */
+renderDI();
+renderDO();
+</script>

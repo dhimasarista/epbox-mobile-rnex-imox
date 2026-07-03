@@ -8,7 +8,7 @@ import {
 import { useMqtt, useMqttTopic } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { getBannerHeight, styles } from '@/styles/screens/home.styles';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import LottieView from 'lottie-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
@@ -239,46 +239,13 @@ export default function HomeScreen() {
             </View>
           </View>
           <View style={styles.headerIcons}>
-            {/* <TouchableOpacity style={styles.iconBtn}>
+            <TouchableOpacity style={styles.iconBtn}>
               <Ionicons name="notifications-outline" size={22} color={AppColors.text} />
               <View style={styles.notificationDot} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.iconBtn}>
               <MaterialCommunityIcons name="line-scan" size={22} color={AppColors.text} />
-            </TouchableOpacity> */}
-            <View style={styles.localZoneToggleRow}>
-              <View
-                style={[
-                  styles.localZoneStatusDot,
-                  {
-                    backgroundColor:
-                      zoneFeedback === 'success'
-                        ? AppColors.success
-                        : zoneFeedback === 'error'
-                          ? AppColors.error
-                          : AppColors.border,
-                  },
-                ]}
-              />
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={handleLocalZoneToggle}
-                style={[
-                  styles.localZonePill,
-                  {
-                    backgroundColor: displayedZoneOn ? AppColors.primary : AppColors.borderStrong,
-                    opacity: pendingZoneCmd !== null ? 0.7 : 1,
-                  },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.localZoneThumb,
-                    { alignSelf: displayedZoneOn ? 'flex-end' : 'flex-start' },
-                  ]}
-                />
-              </TouchableOpacity>
-            </View>
+            </TouchableOpacity>
           </View>
         </View>
 

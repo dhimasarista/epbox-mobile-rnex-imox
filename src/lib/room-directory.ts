@@ -21,6 +21,17 @@ export const MONITORED_ROOMS = [
     active: true,
     route: '/stations/accommodation-room',
   },
+  {
+    id: 'imox-event',
+    title: 'IMOX Event',
+    roomId: 'IE-001',
+    deck: 'Engine Room',
+    status: 'Active',
+    metricLabel: 'DO Active',
+    icon: 'electric-switch',
+    active: true,
+    route: '/stations/imox-event',
+  },
 ] as const;
 
 export type MonitoredRoom = (typeof MONITORED_ROOMS)[number];
