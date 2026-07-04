@@ -54,6 +54,10 @@ export type CarloGavazziSwitchCommandPayload = {
 export type CarloGavazziForceCommandPayload = {
   id: number;
   cmd: CarloGavazziForceCommandName;
+  // Force ON carries the word value to force-write (e.g. the bit-packed DO
+  // word). Force OFF releases the force override; value is unused for OFF
+  // but kept required so callers always send the current known word.
+  value: number;
 };
 export type CarloGavazziGatewayCommandPayload =
   | CarloGavazziCounterCommandPayload
@@ -160,6 +164,14 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
         heatingStatus: 'Heating status signal',
         status: 'Status signal',
       },
+    },
+  },
+  // TODO(engineering): placeholder device IDs — fire fighting room's actual
+  // Modbus/counter IDs on the gateway have not been provided yet. Replace
+  // these two values once confirmed; nothing else needs to change.
+  fireFightingRoom: {
+    doWord: {
+      deviceId: -1,
     },
   },
 } as const;
@@ -353,9 +365,10 @@ export function buildCarloGavazziAlarmCommand(
 
 export function buildCarloGavazziForceCommand(
   id: number,
-  cmd: CarloGavazziForceCommandName
+  cmd: CarloGavazziForceCommandName,
+  value: number
 ): CarloGavazziForceCommandPayload {
-  return { id, cmd };
+  return { id, cmd, value };
 }
 
 export function getCarloGavazziMetricsDevice(

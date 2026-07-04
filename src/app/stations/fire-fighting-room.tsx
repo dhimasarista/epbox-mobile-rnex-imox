@@ -1,10 +1,21 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { type BitChannelMap, unpackChannels, WORD_BIT_LENGTH } from '@/lib/bit-packed-word';
+import {
+  type BitChannelMap,
+  setChannelBit,
+  unpackChannels,
+  WORD_BIT_LENGTH,
+} from '@/lib/bit-packed-word';
+import {
+  buildCarloGavazziForceCommand,
+  CARLO_GAVAZZI_GATEWAY_CONFIG,
+  type CarloGavazziForceCommandName,
+} from '@/lib/mqtt-topics';
+import { useMqtt } from '@/providers/mqtt-provider';
 import { AppColors, AppRadii, AppSpacing, layoutPrimitives, surfacePrimitives, textPrimitives } from '@/styles';
 import { StyleSheet } from 'react-native';
 
@@ -84,6 +95,17 @@ const DO_BIT_MAP: BitChannelMap<DoKey> = DO_CHANNELS.reduce((map, ch, index) => 
   return map;
 }, {} as BitChannelMap<DoKey>);
 
+// Command/response round-trip guard, matching Accommodation Room's
+// ALARM_WRITE_GUARD_MS: how long we wait for gatewayMetrics to confirm a
+// Force command before giving up and reverting the draft DO word.
+const FORCE_WRITE_TIMEOUT_MS = 5_000;
+
+type PendingForceCommand = {
+  cmd: CarloGavazziForceCommandName;
+  wordValue: number;
+  sentAt: number;
+};
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function FireFightingRoomHeader() {
@@ -100,7 +122,7 @@ function FireFightingRoomHeader() {
   );
 }
 
-function FireFightingRoomHero() {
+function FireFightingRoomHero({ isPending }: { isPending: boolean }) {
   return (
     <View style={s.heroCard}>
       <View style={s.heroTopRow}>
@@ -109,8 +131,8 @@ function FireFightingRoomHero() {
           <Text style={s.heroBadgeText}>PLC S7-1200</Text>
         </View>
         <View style={s.liveChip}>
-          <View style={s.liveDot} />
-          <Text style={s.liveChipText}>Local</Text>
+          <View style={[s.liveDot, { backgroundColor: isPending ? AppColors.warning : AppColors.success }]} />
+          <Text style={s.liveChipText}>{isPending ? 'Sending' : 'Local'}</Text>
         </View>
       </View>
       <Text style={s.heroTitle}>Fire Fighting Room</Text>
@@ -126,10 +148,12 @@ function FireFightingRoomHero() {
 // Card 2: last raw decimal word(s) received from PLC → gateway → MQTT (pre-unpack).
 function GatewayControlRow({
   isForceOn,
+  isDisabled,
   onForcePress,
   lastWords,
 }: {
   isForceOn: boolean;
+  isDisabled: boolean;
   onForcePress: (nextForceOn: boolean) => void;
   lastWords: number[];
 }) {
@@ -139,16 +163,21 @@ function GatewayControlRow({
         <Text style={s.ioCountLabel}>Force Control</Text>
         <TouchableOpacity
           activeOpacity={0.85}
+          disabled={isDisabled}
           onPress={() => onForcePress(!isForceOn)}
-          style={[s.forceToggleBtn, isForceOn && s.forceToggleBtnActive]}
+          style={[
+            s.forceToggleBtn,
+            isForceOn && s.forceToggleBtnActive,
+            isDisabled && s.forceToggleBtnDisabled,
+          ]}
           accessibilityRole="switch"
-          accessibilityState={{ checked: isForceOn }}
+          accessibilityState={{ checked: isForceOn, disabled: isDisabled }}
           accessibilityLabel="Force ON/OFF">
           <Text style={[s.forceToggleBtnText, isForceOn && s.forceToggleBtnTextActive]}>
             {isForceOn ? 'FORCE ON' : 'FORCE OFF'}
           </Text>
         </TouchableOpacity>
-        <Text style={s.ioCountSub}>Overrides UWP automation</Text>
+        <Text style={s.ioCountSub}>Sends the whole DO word below</Text>
       </View>
       <View style={[s.ioCountCard, s.ioCountCardDo]}>
         <Text style={[s.ioCountValue, s.ioCountValueDo]}>{lastWords.join(' / ')}</Text>
@@ -200,15 +229,16 @@ function DiStatusRow({
   );
 }
 
-// DO status row — read-only display of the unpacked output bit.
-// Actual write access happens through the Force ON/OFF control above,
-// which flips the whole gateway word rather than one bit at a time.
-function DoStatusRow({
+// DO control toggle — edits the local draft word (per-channel bit), does not
+// publish by itself. Publishing the resulting word happens via Force ON/OFF.
+function DoControlRow({
   ch,
   value,
+  onToggle,
 }: {
   ch: (typeof DO_CHANNELS)[number];
   value: boolean;
+  onToggle: () => void;
 }) {
   const isLamp = ch.key.startsWith('lamp');
   const isBuzzer = ch.key === 'buzzer';
@@ -240,11 +270,17 @@ function DoStatusRow({
           <Text style={s.diMeta}>Ch {ch.channel} · Slot {ch.slot}</Text>
         </View>
       </View>
-      <View style={[s.diValueChip, value && s.diChipActive]}>
-        <Text style={[s.diValueText, { color: value ? AppColors.success : AppColors.textSubtle }]}>
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={onToggle}
+        style={[s.doToggleBtn, value && { backgroundColor: activeColor }]}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: value }}
+        accessibilityLabel={ch.label}>
+        <Text style={[s.doToggleBtnText, value && s.doToggleBtnTextActive]}>
           {value ? 'ON' : 'OFF'}
         </Text>
-      </View>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -252,33 +288,131 @@ function DoStatusRow({
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function FireFightingRoom() {
-  // Local-only state until wired to MQTT: `lastWords` simulates the raw
-  // two-word payload received from the gateway (24 channels don't fit in a
-  // single 16-bit word), and DI/DO are both derived from it by unpacking
-  // bits — matching how the real payload will be consumed.
-  const [lastWords, setLastWords] = useState<number[]>([0, 0]);
-  const [isForceOn, setIsForceOn] = useState(false);
+  const { publishTopic, status } = useMqtt();
 
-  const diState = unpackChannels(lastWords, DI_BIT_MAP);
-  const doState = unpackChannels(lastWords, DO_BIT_MAP);
+  // `confirmedWords` mirrors Accommodation Room's confirmedForm: it only
+  // changes once the gateway echoes back a matching word via gatewayMetrics.
+  // `draftWords` mirrors draftForm: it changes immediately on user input for
+  // a responsive UI, and is what DI/DO rows render from while pending.
+  const [confirmedWords, setConfirmedWords] = useState<number[]>([0, 0]);
+  const [draftWords, setDraftWords] = useState<number[]>([0, 0]);
+  const [pendingForceCommand, setPendingForceCommand] = useState<PendingForceCommand | null>(null);
+  const [lastCommandError, setLastCommandError] = useState<string | null>(null);
 
-  const handleForcePress = useCallback((nextForceOn: boolean) => {
-    // In production this publishes ForceOn/ForceOff via buildCarloGavazziForceCommand
-    // to the gateway's OT command topic, then waits for gatewayMetrics to confirm.
-    setIsForceOn(nextForceOn);
-  }, []);
+  const diState = unpackChannels(draftWords, DI_BIT_MAP);
+  const doState = unpackChannels(draftWords, DO_BIT_MAP);
+  const isForceOn = pendingForceCommand?.cmd === 'ForceOn';
+  const isPending = pendingForceCommand !== null;
+
+  // Same pattern as Accommodation Room's connection-loss effect: once the
+  // broker disconnects, a pending command can never be confirmed, so drop it
+  // immediately rather than leaving the UI stuck on "Sending" — but leave
+  // draftWords untouched, since the user is still allowed to play with the
+  // switches locally while offline (they only get published on reconnect).
+  useEffect(() => {
+    if (status === 'connected') {
+      return;
+    }
+
+    setPendingForceCommand(null);
+  }, [status]);
+
+  // Timeout-revert: if the broker is connected but no gatewayMetrics echo
+  // confirms the sent word within FORCE_WRITE_TIMEOUT_MS, treat the command
+  // as lost — revert the draft word back to the last confirmed value.
+  useEffect(() => {
+    if (!pendingForceCommand) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setPendingForceCommand((current) => {
+        if (!current || current.sentAt !== pendingForceCommand.sentAt) {
+          return current;
+        }
+
+        setDraftWords(confirmedWords);
+        setLastCommandError('No response from gateway. Force command timed out and was reverted.');
+        return null;
+      });
+    }, FORCE_WRITE_TIMEOUT_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [confirmedWords, pendingForceCommand]);
+
+  const toggleDo = useCallback(
+    (key: DoKey) => {
+      setDraftWords((current) => setChannelBit(current, DO_BIT_MAP, key, !doState[key]));
+    },
+    [doState]
+  );
+
+  const handleForcePress = useCallback(
+    async (nextForceOn: boolean) => {
+      if (status !== 'connected') {
+        setLastCommandError('MQTT disconnected. Switches stay local until the broker reconnects.');
+        return;
+      }
+
+      const cmd: CarloGavazziForceCommandName = nextForceOn ? 'ForceOn' : 'ForceOff';
+      // PLACEHOLDER: which word carries the DO bits (word0 vs word1) depends
+      // on the confirmed PLC bit layout — see DO_BIT_MAP above.
+      const wordValue = draftWords[0] ?? 0;
+
+      try {
+        await publishTopic(
+          'gatewayOtCommand',
+          buildCarloGavazziForceCommand(
+            CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.doWord.deviceId,
+            cmd,
+            wordValue
+          )
+        );
+
+        setPendingForceCommand({ cmd, wordValue, sentAt: Date.now() });
+        setLastCommandError(null);
+      } catch (error) {
+        setLastCommandError(error instanceof Error ? error.message : `Unable to send ${cmd}.`);
+      }
+    },
+    [draftWords, publishTopic, status]
+  );
+
+  // In production, a gatewayMetrics message carrying the DO word would land
+  // here (mirroring Accommodation Room's ack effect) and call this to
+  // confirm the pending command: setConfirmedWords(nextWords);
+  // setPendingForceCommand(null). Left as a placeholder until the fire
+  // fighting room's gateway topic/device ID is available.
+
+  const forceHint = useMemo(() => {
+    if (lastCommandError) {
+      return lastCommandError;
+    }
+
+    if (isPending) {
+      return `${pendingForceCommand!.cmd} sent (word ${pendingForceCommand!.wordValue}). Waiting for gateway confirmation.`;
+    }
+
+    if (status !== 'connected') {
+      return 'MQTT disconnected. Toggle switches freely — they only publish once reconnected.';
+    }
+
+    return 'Toggle DO switches below, then press Force ON to write the resulting word to the gateway.';
+  }, [isPending, lastCommandError, pendingForceCommand, status]);
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
       <FireFightingRoomHeader />
 
       <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
-        <FireFightingRoomHero />
+        <FireFightingRoomHero isPending={isPending} />
         <GatewayControlRow
           isForceOn={isForceOn}
-          onForcePress={handleForcePress}
-          lastWords={lastWords}
+          isDisabled={isPending}
+          onForcePress={(next) => void handleForcePress(next)}
+          lastWords={confirmedWords}
         />
+        <Text style={s.forceHint}>{forceHint}</Text>
 
         {/* ── DI: Digital Input (read from PLC, unpacked from word) ── */}
         <View style={s.sectionBlock}>
@@ -309,25 +443,30 @@ export default function FireFightingRoom() {
           </Text>
         </View>
 
-        {/* ── DO: Digital Output (read from PLC, controlled via Force above) ── */}
+        {/* ── DO: Digital Output (write to PLC via Force ON/OFF) ── */}
         <View style={s.sectionBlock}>
           <View style={s.sectionHeader}>
             <View style={s.sectionLabelRow}>
               <View style={[s.sectionDot, { backgroundColor: AppColors.primary }]} />
               <Text style={s.sectionTitle}>Digital Output</Text>
             </View>
-            <Text style={[s.sectionBadge, s.sectionBadgeDo]}>Force Controlled</Text>
+            <Text style={[s.sectionBadge, s.sectionBadgeDo]}>Controllable</Text>
           </View>
 
           <View style={s.doStack}>
             {DO_CHANNELS.map((ch) => (
-              <DoStatusRow key={ch.key} ch={ch} value={doState[ch.key]} />
+              <DoControlRow
+                key={ch.key}
+                ch={ch}
+                value={doState[ch.key]}
+                onToggle={() => toggleDo(ch.key)}
+              />
             ))}
           </View>
 
           <Text style={s.sectionHint}>
-            Writable only through Force ON/OFF above, which overrides the gateway's Running
-            automation for this word.
+            Toggling a switch only edits the local word. Press Force ON above to write it to the
+            gateway; it overrides the UWP function's Running automation for this word.
           </Text>
         </View>
 
@@ -476,6 +615,9 @@ const s = StyleSheet.create({
     backgroundColor: AppColors.error,
     borderColor: AppColors.error,
   },
+  forceToggleBtnDisabled: {
+    opacity: 0.6,
+  },
   forceToggleBtnText: {
     fontSize: 12,
     fontWeight: '800',
@@ -484,6 +626,13 @@ const s = StyleSheet.create({
   },
   forceToggleBtnTextActive: {
     color: AppColors.textInverse,
+  },
+  forceHint: {
+    fontSize: 11,
+    lineHeight: 16,
+    color: AppColors.textSubtle,
+    textAlign: 'center',
+    paddingHorizontal: AppSpacing.md,
   },
 
   // Section
@@ -608,7 +757,7 @@ const s = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  // DO rows (read-only display)
+  // DO controls
   doStack: {
     gap: AppSpacing.sm,
   },
@@ -636,6 +785,26 @@ const s = StyleSheet.create({
     height: 10,
     borderRadius: AppRadii.full,
     flexShrink: 0,
+  },
+  doToggleBtn: {
+    minWidth: 56,
+    height: 36,
+    borderRadius: AppRadii.full,
+    backgroundColor: AppColors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: AppSpacing.md,
+  },
+  doToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: AppColors.textSubtle,
+    letterSpacing: 0.5,
+  },
+  doToggleBtnTextActive: {
+    color: AppColors.textInverse,
   },
 
   bottomSpacer: { height: 96 },

@@ -176,44 +176,77 @@ peduli status logika fungsi tersebut.
 
 ### Command Payload
 
-Tipe command baru di `src/lib/mqtt-topics.ts`:
+Tipe command di `src/lib/mqtt-topics.ts`:
 
 ```ts
 export type CarloGavazziForceCommandName = 'ForceOn' | 'ForceOff';
 export type CarloGavazziForceCommandPayload = {
   id: number;
   cmd: CarloGavazziForceCommandName;
+  value: number; // word DO yang mau di-force-write
 };
 ```
 
-Builder: `buildCarloGavazziForceCommand(id, cmd)`.
+Builder: `buildCarloGavazziForceCommand(id, cmd, value)`. Berbeda dari
+command alarm (`{ id, cmd }` tanpa value), Force di sini **membawa nilai
+word** langsung dalam satu command — bukan dua command terpisah
+(SetValue lalu Force). Alasannya: word DO adalah satu kesatuan bitmask,
+jadi "set nilai" dan "force override" logisnya adalah satu tindakan yang
+sama: menimpa word gateway dengan word hasil kombinasi switch DO di app.
 
-**Catatan:** nama command `ForceOn`/`ForceOff` adalah nama yang disepakati
-untuk implementasi ini — pastikan cocok dengan nama command aktual yang
-diterima gateway/UWP saat wiring MQTT sungguhan dilakukan.
+**Catatan:** nama command `ForceOn`/`ForceOff` dan device ID
+(`CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.doWord.deviceId`, saat ini
+`-1` sebagai placeholder) adalah asumsi kerja — pastikan cocok dengan
+command dan device ID aktual dari gateway saat dikonfirmasi engineering.
 
-### Alur UI
+### Alur UI (Draft/Confirmed, Sama Seperti Accommodation Room)
+
+Layar ini mengikuti pola dua-lapis state yang sama dengan Accommodation
+Room (`draftForm` vs `confirmedForm` — lihat bagian "State Management" di
+`docs/accommodation-room-mqtt.md`):
+
+| State | Sumber | Kapan berubah |
+|---|---|---|
+| `draftWords` | Aksi user (toggle switch DO) | Langsung, responsif, murni lokal |
+| `confirmedWords` | Respons `gatewayMetrics` | Hanya saat gateway mengonfirmasi word yang cocok |
 
 ```
-Card "Force Control" (tombol tunggal)
+User toggle switch DO channel tertentu
         │
         ▼
-Tekan tombol → toggle Force ON / Force OFF
+draftWords berubah (1 bit di-set/clear via setChannelBit) — lokal saja,
+belum publish apa pun
         │
         ▼
-(Saat sudah wired ke MQTT)
-Publish buildCarloGavazziForceCommand(id, 'ForceOn' | 'ForceOff')
-ke topic gatewayOtCommand
+User tekan "Force ON" / "Force OFF"
         │
-        ▼
-Tunggu gatewayMetrics mengonfirmasi word baru
+        ├── MQTT tidak connect
+        │   → error "MQTT disconnected", TIDAK publish,
+        │     draftWords tetap bebas dimainkan user secara lokal
         │
-        ▼
-Unpack word → update tampilan DI/DO
+        └── MQTT connect
+            → publish buildCarloGavazziForceCommand(deviceId, cmd, draftWords[0])
+              ke topic gatewayOtCommand
+            → masuk status pending (pendingForceCommand, sentAt dicatat)
+            │
+            ├── gatewayMetrics balas dengan word yang cocok
+            │   → confirmedWords diperbarui, pending dihapus
+            │
+            └── 5 detik berlalu TANPA respons (FORCE_WRITE_TIMEOUT_MS)
+                → dianggap LOST: draftWords di-revert ke confirmedWords
+                  terakhir, pending dihapus, muncul error
+                  "No response from gateway. Force command timed out
+                  and was reverted."
 ```
 
-Saat ini (belum wired ke MQTT), tombol Force hanya mengubah state lokal
-`isForceOn` sebagai placeholder UI — belum mem-publish apa pun.
+Durasi timeout **5 detik** dipilih agar konsisten dengan
+`ALARM_WRITE_GUARD_MS` di Accommodation Room.
+
+**Kalau koneksi MQTT putus saat command sedang pending** (bukan sejak
+awal disconnect), pending langsung dibatalkan begitu status berubah jadi
+tidak connect — sama seperti efek connection-loss di Accommodation Room
+yang meng-clear `pendingCommands`/`pendingAlarmCommands` saat
+`status !== 'connected'`.
 
 ---
 
@@ -221,13 +254,14 @@ Saat ini (belum wired ke MQTT), tombol Force hanya mengubah state lokal
 
 | | DI (Digital Input) | DO (Digital Output) |
 |---|---|---|
-| Sumber data | Word terakhir dari gateway (via MQTT, setelah unpack) | Word terakhir dari gateway (via MQTT, setelah unpack) |
-| Bisa diubah dari app? | **Tidak.** Read-only, murni menampilkan status sensor/tombol fisik dari PLC. | **Tidak langsung per-channel.** Perubahan hanya lewat tombol **Force Control** di atas, yang mengirim `ForceOn`/`ForceOff` untuk keseluruhan word — bukan toggle satu-satu seperti versi sebelumnya. |
+| Sumber data | Word terakhir dari gateway (via MQTT, setelah unpack) | `draftWords` (lokal, sebelum publish) untuk switch; `confirmedWords` untuk "Last Word Values" |
+| Bisa diubah dari app? | **Tidak.** Read-only, murni menampilkan status sensor/tombol fisik dari PLC. | **Ya, per-channel.** Tiap channel DO punya switch sendiri yang mengubah 1 bit di `draftWords` secara lokal. Publish ke gateway baru terjadi saat tombol **Force ON/OFF** ditekan, yang mengirim **seluruh word** hasil kombinasi switch — bukan command per-channel. |
 
-Ini beda dari implementasi sebelumnya (`imox-event.tsx`), di mana tiap DO
-channel punya toggle sendiri-sendiri. Perubahan ini disengaja: di lapangan,
-kontrol yang tersedia dari gateway adalah **Force ON/OFF pada level word**,
-bukan kontrol bit individual per channel.
+Force ON/OFF di sini bukan pengganti switch per-channel — switch tetap ada
+dan bebas dimainkan user kapan saja (termasuk saat offline). Force ON/OFF
+adalah **aksi publish**: mengambil snapshot `draftWords` saat ini dan
+menuliskannya ke gateway sebagai satu word, sekaligus meng-override status
+Running UWP untuk word tersebut.
 
 ---
 
@@ -238,13 +272,14 @@ jumlah channel DI/DO. Sekarang:
 
 | Card | Isi | Sumber |
 |---|---|---|
-| Force Control | Tombol toggle Force ON / Force OFF | Aksi user → command ke gateway |
-| Last Word Values | Dua angka desimal mentah terakhir (word0 / word1) dari PLC → gateway → MQTT | `lastWords`, sebelum di-unpack |
+| Force Control | Tombol toggle Force ON / Force OFF, disabled saat ada command pending | Aksi user → command ke gateway, membawa `draftWords[0]` |
+| Last Word Values | Dua angka desimal mentah terakhir yang **terkonfirmasi** gateway (word0 / word1) | `confirmedWords`, bukan draft |
 
-Menampilkan angka desimal mentah ini berguna untuk debugging lapangan —
-engineer bisa langsung cocokkan angka yang diterima dengan hasil bitpack
-yang diharapkan dari PLC, tanpa harus menghitung manual dari 24 baris
-status DI/DO di bawahnya.
+Kartu "Last Word Values" sengaja menampilkan `confirmedWords` (bukan
+draft) — ini angka yang benar-benar sudah dikonfirmasi gateway, berguna
+untuk debugging lapangan: engineer bisa cocokkan dengan hasil bitpack yang
+diharapkan dari PLC tanpa perlu menghitung manual dari 24 baris status
+DI/DO di bawahnya.
 
 ---
 
@@ -260,13 +295,23 @@ status DI/DO di bawahnya.
 3. **Nama command Force** yang sebenarnya diterima gateway (`ForceOn`/
    `ForceOff` di implementasi ini adalah asumsi kerja, belum diverifikasi
    ke dokumentasi command CG UWP).
-4. **Topic MQTT** dan device ID spesifik untuk fire fighting room — belum
-   ditambahkan ke `CARLO_GAVAZZI_GATEWAY_CONFIG` karena device ID nyatanya
-   belum tersedia (lihat pola yang sudah ada untuk Accommodation Room di
-   `src/lib/mqtt-topics.ts` sebagai referensi struktur saat wiring
-   dilakukan).
+4. **Device ID untuk word DO** —
+   `CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.doWord.deviceId` saat ini
+   `-1` sebagai placeholder yang jelas tidak valid (lihat komentar
+   `TODO(engineering)` di `src/lib/mqtt-topics.ts`). Ganti dengan device
+   ID/counter ID Modbus asli begitu tersedia dari gateway.
+5. **Ack/konfirmasi dari `gatewayMetrics` belum diimplementasikan** —
+   publish command sudah wired sungguhan ke `useMqtt().publishTopic()`, tapi
+   belum ada listener yang membaca balik word DO dari `gatewayMetrics` untuk
+   memanggil `setConfirmedWords(...)` (lihat komentar placeholder di
+   `handleForcePress`/setelahnya di `fire-fighting-room.tsx`). Sampai ini
+   diimplementasikan, setiap command yang dikirim akan **selalu timeout
+   setelah 5 detik** dan ter-revert, karena tidak ada yang pernah
+   mengonfirmasinya — ini perilaku yang benar secara desain (fail-safe),
+   bukan bug, sampai path konfirmasi metrics-nya disambungkan.
 
-Sampai poin-poin di atas dikonfirmasi, layar ini berjalan dengan data lokal
-(`useState`) sebagai placeholder — struktur kode dan UI sudah siap pakai,
-tinggal menyambungkan ke `useMqtt()` / `useMqttTopic()` seperti pola yang
-sudah dipakai di Accommodation Room.
+Bit mapping (poin 1) dan device ID (poin 2, 4) adalah asumsi kerja demi
+membuat UI dan alur command/response siap pakai — publish ke MQTT sudah
+sungguhan (bukan simulasi), tapi tanpa listener konfirmasi metrics (poin 5)
+dan device ID asli, command yang dikirim tidak akan pernah benar-benar
+mengubah state gateway sungguhan.
