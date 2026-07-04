@@ -22,15 +22,15 @@ export const MONITORED_ROOMS = [
     route: '/stations/accommodation-room',
   },
   {
-    id: 'imox-event',
-    title: 'IMOX Event',
-    roomId: 'IE-001',
+    id: 'fire-fighting-room',
+    title: 'Fire Fighting Room',
+    roomId: 'FF-001',
     deck: 'Engine Room',
     status: 'Active',
     metricLabel: 'DO Active',
     icon: 'electric-switch',
     active: true,
-    route: '/stations/imox-event',
+    route: '/stations/fire-fighting-room',
   },
 ] as const;
 

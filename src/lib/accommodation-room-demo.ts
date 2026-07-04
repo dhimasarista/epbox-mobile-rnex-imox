@@ -1,7 +1,7 @@
-import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
+import { createKeyValueStorage } from '@/lib/cross-platform-storage';
 
 export const ACCOMMODATION_ROOM_STORAGE_KEY = 'epbox.accommodation-room.demo.values';
+const accommodationRoomStorage = createKeyValueStorage(ACCOMMODATION_ROOM_STORAGE_KEY);
 
 export type AccommodationRoomInputKey =
   | 'triggerEnable'
@@ -85,17 +85,9 @@ export function buildAccommodationRoomDashboard(
   };
 }
 
-async function getStoredValue() {
-  if (Platform.OS === 'web') {
-    return globalThis.localStorage?.getItem(ACCOMMODATION_ROOM_STORAGE_KEY) ?? null;
-  }
-
-  return SecureStore.getItemAsync(ACCOMMODATION_ROOM_STORAGE_KEY);
-}
-
 export async function getStoredAccommodationRoomInputs() {
   try {
-    const rawValue = await getStoredValue();
+    const rawValue = await accommodationRoomStorage.getItem();
 
     if (!rawValue) {
       return DEFAULT_ACCOMMODATION_ROOM_INPUTS;
@@ -118,12 +110,5 @@ export async function getStoredAccommodationRoomInputs() {
 }
 
 export async function setStoredAccommodationRoomInputs(inputs: AccommodationRoomInputs) {
-  const serialized = JSON.stringify(inputs);
-
-  if (Platform.OS === 'web') {
-    globalThis.localStorage?.setItem(ACCOMMODATION_ROOM_STORAGE_KEY, serialized);
-    return;
-  }
-
-  await SecureStore.setItemAsync(ACCOMMODATION_ROOM_STORAGE_KEY, serialized);
+  await accommodationRoomStorage.setItem(JSON.stringify(inputs));
 }

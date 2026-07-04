@@ -37,6 +37,9 @@ import {
 } from '@/lib/mqtt-topics';
 
 export type MqttConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
+// Broker session can stay "connected" while the physical gateway has gone silent;
+// this window flags that the last heartbeat/metrics message is too old to trust.
+export const GATEWAY_STALE_AFTER_MS = 60_000;
 export type MqttLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type MqttPublishOptions = Pick<IClientPublishOptions, 'qos' | 'retain'>;
 export type MqttMessageSource = 'broker' | 'local-publish';
@@ -91,9 +94,11 @@ type MqttContextValue = {
   disconnect: () => void;
   endpointLabel: string;
   getTopicMessage: GetTopicMessageFn;
+  isGatewayStale: boolean;
   isSettingsLoading: boolean;
   lastError: string | null;
   lastConnectedAt: number | null;
+  lastGatewaySignalAt: number | null;
   latestLatencySample: MqttLatencySample | null;
   logs: MqttLogEntry[];
   publishTopic: PublishTopicFn;
@@ -288,7 +293,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
           rawPayload,
           {
             qos: options?.qos ?? definition.qos ?? 0,
-            retain: options?.retain ?? definition.retain ?? true,
+            retain: options?.retain ?? definition.retain ?? false,
           },
           (error) => {
             if (error) {
@@ -334,7 +339,9 @@ export function MqttProvider({ children }: PropsWithChildren) {
         keepalive: 30,
         password: latestSettings.password.trim() || undefined,
         protocolVersion: 4,
-        reconnectPeriod: 0,
+        // Auto-reconnect every 5s: broker/gateway link is expected to be unstable
+        // (maritime/edge networks), so the client must recover without operator action.
+        reconnectPeriod: 5_000,
         username: latestSettings.username.trim() || undefined,
       };
 
@@ -476,6 +483,37 @@ export function MqttProvider({ children }: PropsWithChildren) {
 
   const endpointLabel = useMemo(() => getMqttEndpointLabel(settings), [settings]);
 
+  const lastGatewaySignalAt = useMemo(() => {
+    const timestamps = [
+      topicMessages.gatewayHeartbeat?.receivedAt,
+      topicMessages.gatewayMetrics?.receivedAt,
+      topicMessages.gatewayState?.receivedAt,
+    ].filter((timestamp): timestamp is number => typeof timestamp === 'number');
+
+    return timestamps.length > 0 ? Math.max(...timestamps) : null;
+  }, [topicMessages.gatewayHeartbeat, topicMessages.gatewayMetrics, topicMessages.gatewayState]);
+
+  const [staleCheckNow, setStaleCheckNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (status !== 'connected' || lastGatewaySignalAt === null) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      setStaleCheckNow(Date.now());
+    }, 5_000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [lastGatewaySignalAt, status]);
+
+  const isGatewayStale =
+    status === 'connected' &&
+    lastGatewaySignalAt !== null &&
+    staleCheckNow - lastGatewaySignalAt > GATEWAY_STALE_AFTER_MS;
+
   const value = useMemo<MqttContextValue>(
     () => ({
       clearLogs,
@@ -484,9 +522,11 @@ export function MqttProvider({ children }: PropsWithChildren) {
       disconnect,
       endpointLabel,
       getTopicMessage,
+      isGatewayStale,
       isSettingsLoading,
       lastError,
       lastConnectedAt,
+      lastGatewaySignalAt,
       latestLatencySample,
       logs,
       publishTopic,
@@ -504,9 +544,11 @@ export function MqttProvider({ children }: PropsWithChildren) {
       disconnect,
       endpointLabel,
       getTopicMessage,
+      isGatewayStale,
       isSettingsLoading,
       lastError,
       lastConnectedAt,
+      lastGatewaySignalAt,
       latestLatencySample,
       logs,
       publishTopic,

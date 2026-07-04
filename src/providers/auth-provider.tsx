@@ -1,4 +1,3 @@
-import * as SecureStore from 'expo-secure-store';
 import {
   createContext,
   type PropsWithChildren,
@@ -6,9 +5,11 @@ import {
   useEffect,
   useState,
 } from 'react';
-import { Platform } from 'react-native';
+
+import { createKeyValueStorage } from '@/lib/cross-platform-storage';
 
 const AUTH_STORAGE_KEY = 'epbox.auth.session';
+const authSessionStorage = createKeyValueStorage(AUTH_STORAGE_KEY);
 
 const DEMO_CREDENTIALS = {
   id: '',
@@ -26,29 +27,15 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 async function getStoredSession() {
-  if (Platform.OS === 'web') {
-    return globalThis.localStorage?.getItem(AUTH_STORAGE_KEY) ?? null;
-  }
-
-  return SecureStore.getItemAsync(AUTH_STORAGE_KEY);
+  return authSessionStorage.getItem();
 }
 
 async function setStoredSession(value: string) {
-  if (Platform.OS === 'web') {
-    globalThis.localStorage?.setItem(AUTH_STORAGE_KEY, value);
-    return;
-  }
-
-  await SecureStore.setItemAsync(AUTH_STORAGE_KEY, value);
+  await authSessionStorage.setItem(value);
 }
 
 async function clearStoredSession() {
-  if (Platform.OS === 'web') {
-    globalThis.localStorage?.removeItem(AUTH_STORAGE_KEY);
-    return;
-  }
-
-  await SecureStore.deleteItemAsync(AUTH_STORAGE_KEY);
+  await authSessionStorage.removeItem();
 }
 
 export function AuthProvider({ children }: PropsWithChildren) {

@@ -1,8 +1,10 @@
 import Constants from 'expo-constants';
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
+import { createKeyValueStorage } from '@/lib/cross-platform-storage';
+
 export const MQTT_SETTINGS_STORAGE_KEY = 'epbox.connection.settings';
+const mqttSettingsStorage = createKeyValueStorage(MQTT_SETTINGS_STORAGE_KEY);
 export type MqttRuntimeTransport = 'ws' | 'tcp';
 
 export type MqttConnectionSettings = {
@@ -22,20 +24,11 @@ export const DEFAULT_MQTT_CONNECTION_SETTINGS: MqttConnectionSettings = {
 };
 
 export async function getStoredMqttSettingsValue() {
-  if (Platform.OS === 'web') {
-    return globalThis.localStorage?.getItem(MQTT_SETTINGS_STORAGE_KEY) ?? null;
-  }
-
-  return SecureStore.getItemAsync(MQTT_SETTINGS_STORAGE_KEY);
+  return mqttSettingsStorage.getItem();
 }
 
 export async function setStoredMqttSettingsValue(value: string) {
-  if (Platform.OS === 'web') {
-    globalThis.localStorage?.setItem(MQTT_SETTINGS_STORAGE_KEY, value);
-    return;
-  }
-
-  await SecureStore.setItemAsync(MQTT_SETTINGS_STORAGE_KEY, value);
+  await mqttSettingsStorage.setItem(value);
 }
 
 export async function getStoredMqttSettings() {

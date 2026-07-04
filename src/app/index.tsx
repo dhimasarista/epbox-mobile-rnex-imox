@@ -169,8 +169,7 @@ export default function HomeScreen() {
     try {
       await publishTopic(
         'gatewayOtCommand',
-        { id: CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId, cmd: nextCmd },
-        { qos: 0, retain: false }
+        { id: CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId, cmd: nextCmd }
       );
       setPendingZoneCmd({
         cmd: nextCmd,

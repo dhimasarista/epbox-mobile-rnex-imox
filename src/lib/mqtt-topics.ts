@@ -28,6 +28,9 @@ export type CarloGavazziAlarmCommandName =
   | 'TestAlarmOn'
   | 'TestAlarmOff';
 export type CarloGavazziSwitchCommandName = 'On' | 'Off' | 'OnTimeout' | 'OnOffToggle';
+// Force commands override the UWP function's "Running" automation logic, which otherwise
+// keeps overwriting manual output changes. Highest priority over both automation and plain On/Off.
+export type CarloGavazziForceCommandName = 'ForceOn' | 'ForceOff';
 export type CarloGavazziAlarmStatusCode = 1 | 2 | 3 | 4 | 5 | 6;
 
 export type CarloGavazziCounterCommandPayload =
@@ -48,10 +51,15 @@ export type CarloGavazziSwitchCommandPayload = {
   id: number;
   cmd: CarloGavazziSwitchCommandName;
 };
+export type CarloGavazziForceCommandPayload = {
+  id: number;
+  cmd: CarloGavazziForceCommandName;
+};
 export type CarloGavazziGatewayCommandPayload =
   | CarloGavazziCounterCommandPayload
   | CarloGavazziAlarmCommandPayload
-  | CarloGavazziSwitchCommandPayload;
+  | CarloGavazziSwitchCommandPayload
+  | CarloGavazziForceCommandPayload;
 
 export type CarloGavazziMetricsSignal = {
   id: number;
@@ -256,6 +264,8 @@ export const MQTT_TOPICS = {
     label: 'Gateway Alarm',
     description: 'Alarm and fault events published by the gateway.',
     direction: 'subscribe',
+    // QoS 1: alarm events must not be silently dropped on a flaky connection.
+    qos: 1,
   }),
   gatewayPowerTelemetry: createFlexibleTopicDefinition({
     key: 'gatewayPowerTelemetry',
@@ -285,6 +295,9 @@ export const MQTT_TOPICS = {
     label: 'Gateway OT Command',
     description: 'Carlo Gavazzi command channel used by station controls and alarm actions.',
     direction: 'publish',
+    // QoS 1: commands here include alarm reset/acknowledge and relay switches,
+    // which must not be silently dropped on a flaky connection.
+    qos: 1,
     retain: false,
   }),
 } satisfies {
@@ -335,6 +348,13 @@ export function buildCarloGavazziAlarmCommand(
   id: number,
   cmd: CarloGavazziAlarmCommandName
 ): CarloGavazziAlarmCommandPayload {
+  return { id, cmd };
+}
+
+export function buildCarloGavazziForceCommand(
+  id: number,
+  cmd: CarloGavazziForceCommandName
+): CarloGavazziForceCommandPayload {
   return { id, cmd };
 }
 

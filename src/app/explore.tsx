@@ -58,7 +58,7 @@ export default function ExploreScreen() {
       return accommodationInputs.temperatureValue;
     }
 
-    if (roomId === 'imox-event') {
+    if (roomId === 'fire-fighting-room') {
       return '12 DO';
     }
 

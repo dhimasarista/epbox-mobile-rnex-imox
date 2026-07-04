@@ -1,13 +1,35 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { type BitChannelMap, unpackChannels, WORD_BIT_LENGTH } from '@/lib/bit-packed-word';
 import { AppColors, AppRadii, AppSpacing, layoutPrimitives, surfacePrimitives, textPrimitives } from '@/styles';
 import { StyleSheet } from 'react-native';
 
 // ─── IO definitions ─────────────────────────────────────────────────────────
+//
+// The PLC (S7-1200) does not expose these 12 DI + 12 DO as 24 separate Modbus
+// registers. Every channel here is a single boolean, so the PLC bit-packs
+// them into 16-bit words (uint16) before the Carlo Gavazzi UWP-4.0 gateway
+// forwards plain decimal numbers over MQTT. This screen unpacks those
+// decimals back into individual channel bits for display.
+//
+// 24 channels do not fit in one 16-bit word (max 16 flags per word), so two
+// words are used. Channels are packed sequentially across both words in
+// declaration order — DI first, then DO — NOT one word per DI/DO group:
+//   global bit 0-11  -> DI channels 1-12   -> word0 bit 0-11
+//   global bit 12-15 -> DO channels 1-4    -> word0 bit 12-15
+//   global bit 16-23 -> DO channels 5-12   -> word1 bit 0-7
+// A word value is a plain bitmask, e.g. DI channel 1 + DI channel 2 both
+// active at once is bit0=1, bit1=1 -> word0 = 0b11 = 3 (not two separate
+// scenarios to enumerate — every combination is just the sum of active bits).
+//
+// Bit position per channel (wordIndex/bitIndex below) is a PLACEHOLDER —
+// engineering has not confirmed the final PLC bit layout yet. Update
+// DI_BIT_MAP / DO_BIT_MAP once that mapping is confirmed; nothing else in
+// this file needs to change.
 
 const DI_CHANNELS = [
   { key: 'emergencyStop',        label: 'Emergency Stop',          channel: 1,  slot: 1, contactType: 'NC' },
@@ -41,16 +63,30 @@ const DO_CHANNELS = [
 
 type DiKey = (typeof DI_CHANNELS)[number]['key'];
 type DoKey = (typeof DO_CHANNELS)[number]['key'];
-type DiState = Record<DiKey, boolean>;
-type DoState = Record<DoKey, boolean>;
 
-function makeDefaultState<T extends { key: string }>(channels: readonly T[]): Record<string, boolean> {
-  return Object.fromEntries(channels.map((ch) => [ch.key, false])) as Record<string, boolean>;
+// PLACEHOLDER mapping — replace with the confirmed PLC bit layout when
+// available. Channels are packed sequentially (DI 1-12, then DO 1-12) across
+// as many words as needed, wrapping into the next word past bit 15.
+function getSequentialWordPosition(globalIndex: number) {
+  return {
+    wordIndex: Math.floor(globalIndex / WORD_BIT_LENGTH),
+    bitIndex: globalIndex % WORD_BIT_LENGTH,
+  };
 }
+
+const DI_BIT_MAP: BitChannelMap<DiKey> = DI_CHANNELS.reduce((map, ch, index) => {
+  map[ch.key] = getSequentialWordPosition(index);
+  return map;
+}, {} as BitChannelMap<DiKey>);
+
+const DO_BIT_MAP: BitChannelMap<DoKey> = DO_CHANNELS.reduce((map, ch, index) => {
+  map[ch.key] = getSequentialWordPosition(DI_CHANNELS.length + index);
+  return map;
+}, {} as BitChannelMap<DoKey>);
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function ImoxEventHeader() {
+function FireFightingRoomHeader() {
   const router = useRouter();
 
   return (
@@ -58,13 +94,13 @@ function ImoxEventHeader() {
       <TouchableOpacity style={surfacePrimitives.iconButton} onPress={() => router.navigate('/explore')}>
         <Feather name="arrow-left" size={24} color={AppColors.text} />
       </TouchableOpacity>
-      <Text style={s.headerLabel}>IMOX Event</Text>
+      <Text style={s.headerLabel}>Fire Fighting Room</Text>
       <View style={s.headerGhost} />
     </View>
   );
 }
 
-function ImoxEventHero() {
+function FireFightingRoomHero() {
   return (
     <View style={s.heroCard}>
       <View style={s.heroTopRow}>
@@ -77,32 +113,53 @@ function ImoxEventHero() {
           <Text style={s.liveChipText}>Local</Text>
         </View>
       </View>
-      <Text style={s.heroTitle}>IMOX Event Station</Text>
+      <Text style={s.heroTitle}>Fire Fighting Room</Text>
       <Text style={s.heroSubtitle}>
-        DI channels are read-only sensor inputs from the PLC. DO channels send boolean commands to the gateway.
+        24 DI/DO channels are bit-packed by the PLC across two Modbus words before the CG
+        UWP-4.0 gateway forwards them as decimals over MQTT. DI is read-only; DO is force-controlled.
       </Text>
     </View>
   );
 }
 
-function IoCountRow() {
+// Card 1: Force ON/OFF command sent to the gateway to override UWP automation.
+// Card 2: last raw decimal word(s) received from PLC → gateway → MQTT (pre-unpack).
+function GatewayControlRow({
+  isForceOn,
+  onForcePress,
+  lastWords,
+}: {
+  isForceOn: boolean;
+  onForcePress: (nextForceOn: boolean) => void;
+  lastWords: number[];
+}) {
   return (
     <View style={s.ioCountRow}>
-      <View style={s.ioCountCard}>
-        <Text style={s.ioCountValue}>12</Text>
-        <Text style={s.ioCountLabel}>Digital Input</Text>
-        <Text style={s.ioCountSub}>Read-only</Text>
+      <View style={[s.ioCountCard, isForceOn && s.ioCountCardForceActive]}>
+        <Text style={s.ioCountLabel}>Force Control</Text>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => onForcePress(!isForceOn)}
+          style={[s.forceToggleBtn, isForceOn && s.forceToggleBtnActive]}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: isForceOn }}
+          accessibilityLabel="Force ON/OFF">
+          <Text style={[s.forceToggleBtnText, isForceOn && s.forceToggleBtnTextActive]}>
+            {isForceOn ? 'FORCE ON' : 'FORCE OFF'}
+          </Text>
+        </TouchableOpacity>
+        <Text style={s.ioCountSub}>Overrides UWP automation</Text>
       </View>
       <View style={[s.ioCountCard, s.ioCountCardDo]}>
-        <Text style={[s.ioCountValue, s.ioCountValueDo]}>12</Text>
-        <Text style={s.ioCountLabel}>Digital Output</Text>
-        <Text style={s.ioCountSub}>Controllable</Text>
+        <Text style={[s.ioCountValue, s.ioCountValueDo]}>{lastWords.join(' / ')}</Text>
+        <Text style={s.ioCountLabel}>Last Word Values</Text>
+        <Text style={s.ioCountSub}>Raw decimals from gateway (word0 / word1)</Text>
       </View>
     </View>
   );
 }
 
-// DI status indicator — read-only, shows current boolean value
+// DI status indicator — read-only, unpacked from the unified word
 function DiStatusRow({
   ch,
   value,
@@ -143,15 +200,15 @@ function DiStatusRow({
   );
 }
 
-// DO control toggle — sends boolean command
-function DoControlRow({
+// DO status row — read-only display of the unpacked output bit.
+// Actual write access happens through the Force ON/OFF control above,
+// which flips the whole gateway word rather than one bit at a time.
+function DoStatusRow({
   ch,
   value,
-  onToggle,
 }: {
   ch: (typeof DO_CHANNELS)[number];
   value: boolean;
-  onToggle: () => void;
 }) {
   const isLamp = ch.key.startsWith('lamp');
   const isBuzzer = ch.key === 'buzzer';
@@ -183,45 +240,47 @@ function DoControlRow({
           <Text style={s.diMeta}>Ch {ch.channel} · Slot {ch.slot}</Text>
         </View>
       </View>
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onPress={onToggle}
-        style={[s.doToggleBtn, value && { backgroundColor: activeColor }]}
-        accessibilityRole="switch"
-        accessibilityState={{ checked: value }}
-        accessibilityLabel={ch.label}>
-        <Text style={[s.doToggleBtnText, value && s.doToggleBtnTextActive]}>
+      <View style={[s.diValueChip, value && s.diChipActive]}>
+        <Text style={[s.diValueText, { color: value ? AppColors.success : AppColors.textSubtle }]}>
           {value ? 'ON' : 'OFF'}
         </Text>
-      </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
-export default function ImoxEventStation() {
-  const [diState, setDiState] = useState<DiState>(() => makeDefaultState(DI_CHANNELS) as DiState);
-  const [doState, setDoState] = useState<DoState>(() => makeDefaultState(DO_CHANNELS) as DoState);
+export default function FireFightingRoom() {
+  // Local-only state until wired to MQTT: `lastWords` simulates the raw
+  // two-word payload received from the gateway (24 channels don't fit in a
+  // single 16-bit word), and DI/DO are both derived from it by unpacking
+  // bits — matching how the real payload will be consumed.
+  const [lastWords, setLastWords] = useState<number[]>([0, 0]);
+  const [isForceOn, setIsForceOn] = useState(false);
 
-  const toggleDo = (key: DoKey) => {
-    setDoState((current) => ({ ...current, [key]: !current[key] }));
-  };
+  const diState = unpackChannels(lastWords, DI_BIT_MAP);
+  const doState = unpackChannels(lastWords, DO_BIT_MAP);
 
-  // DI demo toggle — remove once wired to MQTT
-  const toggleDi = (key: DiKey) => {
-    setDiState((current) => ({ ...current, [key]: !current[key] }));
-  };
+  const handleForcePress = useCallback((nextForceOn: boolean) => {
+    // In production this publishes ForceOn/ForceOff via buildCarloGavazziForceCommand
+    // to the gateway's OT command topic, then waits for gatewayMetrics to confirm.
+    setIsForceOn(nextForceOn);
+  }, []);
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
-      <ImoxEventHeader />
+      <FireFightingRoomHeader />
 
       <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
-        <ImoxEventHero />
-        <IoCountRow />
+        <FireFightingRoomHero />
+        <GatewayControlRow
+          isForceOn={isForceOn}
+          onForcePress={handleForcePress}
+          lastWords={lastWords}
+        />
 
-        {/* ── DI: Digital Input (read from PLC) ── */}
+        {/* ── DI: Digital Input (read from PLC, unpacked from word) ── */}
         <View style={s.sectionBlock}>
           <View style={s.sectionHeader}>
             <View style={s.sectionLabelRow}>
@@ -233,47 +292,42 @@ export default function ImoxEventStation() {
 
           <View style={s.ioCard}>
             {DI_CHANNELS.map((ch, index) => (
-              <TouchableOpacity
+              <View
                 key={ch.key}
-                activeOpacity={0.75}
-                onPress={() => toggleDi(ch.key)}
                 style={[
                   s.diRowWrap,
                   index < DI_CHANNELS.length - 1 && s.rowDivider,
                 ]}>
                 <DiStatusRow ch={ch} value={diState[ch.key]} />
-              </TouchableOpacity>
+              </View>
             ))}
           </View>
 
           <Text style={s.sectionHint}>
-            Tap a row to simulate DI value. In production these update from the PLC via MQTT.
+            Unpacked from the last word received via MQTT. Bit mapping is a placeholder pending
+            confirmation from engineering.
           </Text>
         </View>
 
-        {/* ── DO: Digital Output (write to PLC) ── */}
+        {/* ── DO: Digital Output (read from PLC, controlled via Force above) ── */}
         <View style={s.sectionBlock}>
           <View style={s.sectionHeader}>
             <View style={s.sectionLabelRow}>
               <View style={[s.sectionDot, { backgroundColor: AppColors.primary }]} />
               <Text style={s.sectionTitle}>Digital Output</Text>
             </View>
-            <Text style={[s.sectionBadge, s.sectionBadgeDo]}>Controllable</Text>
+            <Text style={[s.sectionBadge, s.sectionBadgeDo]}>Force Controlled</Text>
           </View>
 
           <View style={s.doStack}>
             {DO_CHANNELS.map((ch) => (
-              <DoControlRow
-                key={ch.key}
-                ch={ch}
-                value={doState[ch.key]}
-                onToggle={() => toggleDo(ch.key)}
-              />
+              <DoStatusRow key={ch.key} ch={ch} value={doState[ch.key]} />
             ))}
           </View>
 
           <Text style={s.sectionHint}>
-            Toggle sends a boolean command to the CG gateway via the OT command topic.
+            Writable only through Force ON/OFF above, which overrides the gateway's Running
+            automation for this word.
           </Text>
         </View>
 
@@ -365,7 +419,7 @@ const s = StyleSheet.create({
     color: AppColors.textInverseSubtle,
   },
 
-  // IO count
+  // Gateway control row (Force + last word value)
   ioCountRow: {
     flexDirection: 'row',
     gap: AppSpacing.md,
@@ -379,7 +433,11 @@ const s = StyleSheet.create({
     paddingVertical: AppSpacing.lg,
     paddingHorizontal: AppSpacing.md,
     alignItems: 'center',
-    gap: 2,
+    gap: 6,
+  },
+  ioCountCardForceActive: {
+    backgroundColor: AppColors.surfaceError,
+    borderColor: '#F4B7B7',
   },
   ioCountCardDo: {
     backgroundColor: AppColors.surfaceAccent,
@@ -402,6 +460,30 @@ const s = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: AppColors.textSubtle,
+  },
+  forceToggleBtn: {
+    minWidth: 120,
+    height: 36,
+    borderRadius: AppRadii.full,
+    backgroundColor: AppColors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: AppSpacing.md,
+  },
+  forceToggleBtnActive: {
+    backgroundColor: AppColors.error,
+    borderColor: AppColors.error,
+  },
+  forceToggleBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: AppColors.textSubtle,
+    letterSpacing: 0.5,
+  },
+  forceToggleBtnTextActive: {
+    color: AppColors.textInverse,
   },
 
   // Section
@@ -526,7 +608,7 @@ const s = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  // DO controls
+  // DO rows (read-only display)
   doStack: {
     gap: AppSpacing.sm,
   },
@@ -554,26 +636,6 @@ const s = StyleSheet.create({
     height: 10,
     borderRadius: AppRadii.full,
     flexShrink: 0,
-  },
-  doToggleBtn: {
-    minWidth: 56,
-    height: 36,
-    borderRadius: AppRadii.full,
-    backgroundColor: AppColors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: AppColors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: AppSpacing.md,
-  },
-  doToggleBtnText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: AppColors.textSubtle,
-    letterSpacing: 0.5,
-  },
-  doToggleBtnTextActive: {
-    color: AppColors.textInverse,
   },
 
   bottomSpacer: { height: 96 },

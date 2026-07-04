@@ -1,7 +1,7 @@
-import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
+import { createKeyValueStorage } from '@/lib/cross-platform-storage';
 
 export const PUMP_ROOM_DEMO_STORAGE_KEY = 'epbox.pump-room.demo.values';
+const pumpRoomStorage = createKeyValueStorage(PUMP_ROOM_DEMO_STORAGE_KEY);
 
 export type PumpRoomPlcInputKey = 'pressurePump1' | 'pressurePump2' | 'dischargeFlowRate';
 
@@ -97,17 +97,9 @@ export function buildPumpRoomDashboard(inputs: PumpRoomPlcInputs): PumpRoomDashb
   };
 }
 
-async function getStoredValue() {
-  if (Platform.OS === 'web') {
-    return globalThis.localStorage?.getItem(PUMP_ROOM_DEMO_STORAGE_KEY) ?? null;
-  }
-
-  return SecureStore.getItemAsync(PUMP_ROOM_DEMO_STORAGE_KEY);
-}
-
 export async function getStoredPumpRoomPlcInputs() {
   try {
-    const rawValue = await getStoredValue();
+    const rawValue = await pumpRoomStorage.getItem();
 
     if (!rawValue) {
       return DEFAULT_PUMP_ROOM_PLC_INPUTS;
@@ -127,12 +119,5 @@ export async function getStoredPumpRoomPlcInputs() {
 }
 
 export async function setStoredPumpRoomPlcInputs(inputs: PumpRoomPlcInputs) {
-  const serialized = JSON.stringify(inputs);
-
-  if (Platform.OS === 'web') {
-    globalThis.localStorage?.setItem(PUMP_ROOM_DEMO_STORAGE_KEY, serialized);
-    return;
-  }
-
-  await SecureStore.setItemAsync(PUMP_ROOM_DEMO_STORAGE_KEY, serialized);
+  await pumpRoomStorage.setItem(JSON.stringify(inputs));
 }

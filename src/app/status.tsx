@@ -152,7 +152,9 @@ export default function StatusScreen() {
     connectedAt,
     disconnect,
     endpointLabel,
+    isGatewayStale,
     isSettingsLoading,
+    lastGatewaySignalAt,
     logs,
     refreshSettings,
     status,
@@ -236,6 +238,16 @@ export default function StatusScreen() {
             <Text style={styles.headerBadgeText}>{statusMeta.label}</Text>
           </View>
         </View>
+
+        {isGatewayStale ? (
+          <View style={[styles.heroCard, { backgroundColor: AppColors.surfaceError, borderColor: '#F4B7B7', borderWidth: 1 }]}>
+            <Text style={[styles.heroValue, { color: AppColors.error }]}>Gateway Stale</Text>
+            <Text style={styles.heroLabel}>
+              Broker session is connected, but no heartbeat/metrics from the gateway since{' '}
+              {formatConnectedTimestamp(lastGatewaySignalAt)}. The physical device may be offline.
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.heroCard}>
           <Text style={styles.heroLabel}>{isSettingsLoading ? 'Loading saved settings...' : endpointLabel}</Text>
