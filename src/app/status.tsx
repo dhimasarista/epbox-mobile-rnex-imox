@@ -5,11 +5,12 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-  getMqttRuntimeTransportDetail,
-  getMqttTransportLabel,
-  hasMqttConnectionSettings,
-} from '@/lib/mqtt-settings';
-import { useMqtt, type MqttConnectionState, type MqttLogLevel } from '@/providers/mqtt-provider';
+  MQTT_TOPIC_CATALOG,
+  useMqtt,
+  type MqttConnectionState,
+  type MqttLogLevel,
+  type MqttTopicDefinition,
+} from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { styles } from '@/styles/screens/status.styles';
 
@@ -45,7 +46,7 @@ const MQTT_STATUS_META: Record<
   },
   disconnected: {
     accent: AppColors.textSubtle,
-    label: 'Disconnected',
+    label: 'Disconn..',
     detail: 'Broker session is closed.',
   },
   error: {
@@ -79,6 +80,30 @@ function getLogAccent(level: MqttLogLevel) {
   return AppColors.primary;
 }
 
+function getTopicDirectionAccent(direction: MqttTopicDefinition['direction']) {
+  if (direction === 'publish') {
+    return AppColors.primary;
+  }
+
+  if (direction === 'subscribe') {
+    return AppColors.info;
+  }
+
+  return AppColors.success;
+}
+
+function getTopicDirectionLabel(direction: MqttTopicDefinition['direction']) {
+  if (direction === 'publish') {
+    return 'Publish';
+  }
+
+  if (direction === 'subscribe') {
+    return 'Subscribe';
+  }
+
+  return 'Duplex';
+}
+
 function formatConnectedTimestamp(timestamp: number | null) {
   if (!timestamp) {
     return 'No session yet';
@@ -106,6 +131,20 @@ function formatSessionDuration(connectedAt: number | null, nowTimestamp: number)
   return `${hours}:${minutes}:${seconds}`;
 }
 
+function formatTopicPayloadPreview(payload: unknown) {
+  try {
+    const serialized = JSON.stringify(payload);
+
+    if (serialized.length <= 120) {
+      return serialized;
+    }
+
+    return `${serialized.slice(0, 117)}...`;
+  } catch {
+    return 'Unable to preview payload.';
+  }
+}
+
 export default function StatusScreen() {
   const {
     clearLogs,
@@ -114,13 +153,10 @@ export default function StatusScreen() {
     disconnect,
     endpointLabel,
     isSettingsLoading,
-    lastError,
-    lastConnectedAt,
     logs,
     refreshSettings,
-    settings,
     status,
-    statusMessage,
+    topicMessages,
   } = useMqtt();
   const [activeLogFilter, setActiveLogFilter] = useState<LogFilter>('all');
   const [nowTimestamp, setNowTimestamp] = useState(() => Date.now());
@@ -146,7 +182,6 @@ export default function StatusScreen() {
   }, [connectedAt]);
 
   const statusMeta = MQTT_STATUS_META[status];
-  const hasSettings = hasMqttConnectionSettings(settings);
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting';
   const actionLabel = isConnecting
@@ -158,30 +193,6 @@ export default function StatusScreen() {
   const overviewCards: StatusOverviewCard[] = useMemo(
     () => [
       {
-        title: 'Connection',
-        value: statusMeta.label,
-        detail: lastError ?? statusMessage,
-        iconFamily: 'feather',
-        iconName: 'radio',
-        accent: statusMeta.accent,
-      },
-      {
-        title: 'Broker',
-        value: hasSettings ? 'Configured' : 'Pending',
-        detail: isSettingsLoading ? 'Loading saved broker...' : endpointLabel,
-        iconFamily: 'material',
-        iconName: 'transmission-tower',
-        accent: AppColors.primary,
-      },
-      {
-        title: 'Last Connected',
-        value: lastConnectedAt ? 'Recorded' : 'Waiting',
-        detail: formatConnectedTimestamp(lastConnectedAt),
-        iconFamily: 'feather',
-        iconName: 'clock',
-        accent: AppColors.success,
-      },
-      {
         title: 'Session Duration',
         value: isConnected ? formatSessionDuration(connectedAt, nowTimestamp) : 'Offline',
         detail: isConnected ? 'Active uptime' : 'No running session',
@@ -189,42 +200,21 @@ export default function StatusScreen() {
         iconName: 'timer-outline',
         accent: '#3B82F6',
       },
-      {
-        title: 'Client Session',
-        value: settings.clientId.trim() || 'Auto',
-        detail: settings.username.trim() || 'Anonymous session',
-        iconFamily: 'feather',
-        iconName: 'cpu',
-        accent: AppColors.success,
-      },
-      {
-        title: 'Transport',
-        value: hasSettings ? getMqttTransportLabel(endpointLabel) : 'Standby',
-        detail: getMqttRuntimeTransportDetail(settings),
-        iconFamily: 'material',
-        iconName: 'connection',
-        accent: AppColors.primary,
-      },
     ],
-    [
-      connectedAt,
-      endpointLabel,
-      hasSettings,
-      isConnected,
-      isSettingsLoading,
-      lastConnectedAt,
-      lastError,
-      nowTimestamp,
-      settings,
-      statusMessage,
-      statusMeta.accent,
-      statusMeta.label,
-    ]
+    [connectedAt, isConnected, nowTimestamp]
   );
 
   const filteredLogs = useMemo(
     () => logs.filter((log) => activeLogFilter === 'all' || log.level === activeLogFilter),
     [activeLogFilter, logs]
+  );
+  const topicCatalog = useMemo(
+    () =>
+      MQTT_TOPIC_CATALOG.map((definition) => ({
+        definition,
+        latestMessage: topicMessages[definition.key] ?? null,
+      })),
+    [topicMessages]
   );
 
   const handleConnectionAction = () => {
@@ -242,36 +232,15 @@ export default function StatusScreen() {
         <View style={styles.header}>
           <Text style={styles.title}>System Status</Text>
           <View style={styles.headerBadge}>
-            <Feather name="activity" size={16} color={statusMeta.accent} />
+            <MaterialCommunityIcons name="transmission-tower" size={18} color={statusMeta.accent} />
             <Text style={styles.headerBadgeText}>{statusMeta.label}</Text>
           </View>
         </View>
 
         <View style={styles.heroCard}>
-          <Text style={styles.heroLabel}>MQTT Control</Text>
-          <Text style={styles.heroValue}>Broker Session</Text>
-          <Text style={styles.heroDetail}>{lastError ?? statusMeta.detail}</Text>
-        </View>
-
-        <View style={styles.mqttCard}>
-          <View style={styles.mqttHeader}>
-            <View style={styles.mqttIconWrap}>
-              <MaterialCommunityIcons name="transmission-tower" size={18} color={AppColors.primary} />
-            </View>
-            <View style={[styles.mqttStatusBadge, { backgroundColor: `${statusMeta.accent}18` }]}>
-              <View style={[styles.mqttStatusDot, { backgroundColor: statusMeta.accent }]} />
-              <Text style={[styles.mqttStatusBadgeText, { color: statusMeta.accent }]}>
-                {statusMeta.label}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.mqttTitle}>Connect MQTT Broker</Text>
-          <Text style={styles.mqttEndpoint}>
-            {isSettingsLoading ? 'Loading saved MQTT settings...' : endpointLabel}
-          </Text>
-          <Text style={styles.mqttDetail}>{statusMessage}</Text>
-
+          <Text style={styles.heroLabel}>{isSettingsLoading ? 'Loading saved settings...' : endpointLabel}</Text>
+          <Text style={styles.heroValue}>Broker Connection</Text>
+          {/* <Text style={styles.heroDetail}>{lastError ?? statusMeta.detail}</Text> */}
           <Pressable
             disabled={isSettingsLoading || isConnecting}
             onPress={handleConnectionAction}
@@ -283,15 +252,9 @@ export default function StatusScreen() {
             ]}>
             <Text style={styles.mqttActionButtonText}>{actionLabel}</Text>
           </Pressable>
-
-          {!hasSettings && !isConnected ? (
-            <Text style={styles.mqttInlineHint}>
-              Isi broker di Settings dulu, lalu tekan Connect dari panel ini.
-            </Text>
-          ) : null}
         </View>
 
-        <Text style={[styles.sectionLabel, styles.sectionLabelStandalone]}>MQTT Overview</Text>
+        {/* <Text style={[styles.sectionLabel, styles.sectionLabelStandalone]}>Overview</Text> */}
         <View style={styles.grid}>
           {overviewCards.map((card) => (
             <View key={card.title} style={styles.card}>
@@ -307,6 +270,50 @@ export default function StatusScreen() {
               <Text style={styles.cardDetail}>{card.detail}</Text>
             </View>
           ))}
+        </View>
+
+        <Text style={[styles.sectionLabel, styles.sectionLabelStandalone]}>Topic Catalog</Text>
+        <View style={styles.topicCard}>
+          {topicCatalog.map(({ definition, latestMessage }, index) => {
+            const accent = getTopicDirectionAccent(definition.direction);
+
+            return (
+              <View
+                key={definition.key}
+                style={[
+                  styles.topicItem,
+                  index < topicCatalog.length - 1 && styles.topicItemDivider,
+                ]}>
+                <View style={styles.topicTopRow}>
+                  <Text style={styles.topicLabel}>{definition.label}</Text>
+                  <View
+                    style={[
+                      styles.topicDirectionBadge,
+                      { backgroundColor: `${accent}18` },
+                    ]}>
+                    <Text style={[styles.topicDirectionText, { color: accent }]}>
+                      {getTopicDirectionLabel(definition.direction)}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.topicPath}>{definition.topic}</Text>
+                {/* <Text style={styles.topicDescription}>{definition.description}</Text> */}
+                <Text style={styles.topicPayload}>
+                  {latestMessage
+                    ? formatTopicPayloadPreview(latestMessage.payload)
+                    : 'No payload yet. Connect MQTT and wait for gateway events or publish a command.'}
+                </Text>
+                <Text style={styles.topicTimestamp}>
+                  {latestMessage
+                    ? `Last update ${formatConnectedTimestamp(latestMessage.receivedAt)} via ${
+                        latestMessage.source === 'broker' ? 'broker' : 'local publish'
+                      }`
+                    : 'Waiting for first payload'}
+                </Text>
+              </View>
+            );
+          })}
         </View>
 
         <View style={styles.sectionHeader}>

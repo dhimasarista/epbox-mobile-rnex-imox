@@ -58,6 +58,10 @@ export default function ExploreScreen() {
       return accommodationInputs.temperatureValue;
     }
 
+    if (roomId === 'imox-event') {
+      return '12 DO';
+    }
+
     return 'Standby';
   };
 
@@ -112,7 +116,7 @@ export default function ExploreScreen() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Monitored Spaces</Text>
-          <Text style={styles.sectionAction}>2 rooms only</Text>
+          <Text style={styles.sectionAction}>{MONITORED_ROOMS.length} stations</Text>
         </View>
 
         {MONITORED_ROOMS.map((room) => (

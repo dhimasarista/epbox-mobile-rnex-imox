@@ -121,7 +121,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   mqttActionButtonDisconnect: {
-    backgroundColor: AppColors.text,
+    backgroundColor: AppColors.error,
   },
   mqttActionButtonPressed: {
     opacity: 0.92,
@@ -137,6 +137,62 @@ export const styles = StyleSheet.create({
   mqttInlineHint: {
     fontSize: 12,
     lineHeight: 17,
+    color: AppColors.textSubtle,
+  },
+  topicCard: {
+    backgroundColor: AppColors.surface,
+    borderRadius: AppRadii.xxl,
+    padding: AppSpacing.section,
+    marginBottom: AppSpacing.section,
+  },
+  topicItem: {
+    gap: AppSpacing.sm,
+    paddingVertical: AppSpacing.sm,
+  },
+  topicItemDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: AppColors.border,
+    paddingBottom: AppSpacing.section,
+    marginBottom: AppSpacing.section,
+  },
+  topicTopRow: {
+    ...layoutPrimitives.headerRow,
+    alignItems: 'center',
+    gap: AppSpacing.md,
+  },
+  topicLabel: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '800',
+    color: AppColors.text,
+  },
+  topicDirectionBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: AppSpacing.xs,
+    borderRadius: AppRadii.full,
+  },
+  topicDirectionText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  topicPath: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: AppColors.textSubtle,
+  },
+  topicDescription: {
+    ...textPrimitives.body,
+    color: AppColors.textMuted,
+  },
+  topicPayload: {
+    fontSize: 12,
+    lineHeight: 18,
+    color: AppColors.text,
+    fontWeight: '600',
+  },
+  topicTimestamp: {
+    fontSize: 11,
+    lineHeight: 16,
     color: AppColors.textSubtle,
   },
   sectionHeader: {

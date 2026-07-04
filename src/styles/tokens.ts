@@ -78,6 +78,7 @@ export const AppColors = {
   tabActive: '#333533',
   warning: "#FBBF24",
   error: "#EF4444",
+  errorInverse: "#FEE2E2",
 } as const;
 
 export const AppSpacing = {

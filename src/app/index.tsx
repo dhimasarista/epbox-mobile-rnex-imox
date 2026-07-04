@@ -1,12 +1,64 @@
-import { useFocusEffect } from 'expo-router';
 import { useNetworkSignal } from '@/hooks/use-network-signal';
+import { getMqttTransportLabel } from '@/lib/mqtt-settings';
+import {
+  CARLO_GAVAZZI_GATEWAY_CONFIG,
+  getZoneActivatedState,
+  type CarloGavazziSwitchCommandName,
+} from '@/lib/mqtt-topics';
+import { useMqtt, useMqttTopic } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { getBannerHeight, styles } from '@/styles/screens/home.styles';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import LottieView from 'lottie-react-native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+type HomeStatCardConfig = {
+  title: string;
+  iconName: ComponentProps<typeof Feather>['name'];
+  value: number | string;
+  unit?: string;
+  prefix?: string;
+};
+
+function SignalBarStrip({
+  activeBars,
+  totalBars,
+}: {
+  activeBars: number;
+  totalBars: number;
+}) {
+  return (
+    <View style={styles.batteryVisualizer}>
+      {Array.from({ length: totalBars }, (_, index) => (
+        <View
+          key={`signal-bar-${index}`}
+          style={[styles.batteryBar, index < activeBars && styles.batteryBarActive]}
+        />
+      ))}
+    </View>
+  );
+}
+
+function HomeStatCard({ title, iconName, value, unit, prefix }: HomeStatCardConfig) {
+  return (
+    <View style={styles.statCard}>
+      <View style={styles.statHeader}>
+        <Text style={styles.statTitle}>{title}</Text>
+        <View style={styles.statIconContainer}>
+          <Feather name={iconName} size={14} color={AppColors.primary} />
+        </View>
+      </View>
+      <Text style={styles.statValue}>
+        {prefix ? <Text style={styles.statUnit}>{prefix}</Text> : null}
+        {value}
+        {unit ? <Text style={styles.statUnit}> {unit}</Text> : null}
+      </Text>
+    </View>
+  );
+}
 
 export default function HomeScreen() {
   const { width, height } = useWindowDimensions();
@@ -16,6 +68,150 @@ export default function HomeScreen() {
     enabled: isSignalPollingEnabled,
     refreshIntervalMs: 2000,
   });
+
+  const { endpointLabel, latestLatencySample, publishTopic, recordLatencySample, status } = useMqtt();
+  const brokerTransportLabel = getMqttTransportLabel(endpointLabel);
+  const responseTimeValue = latestLatencySample?.durationMs ?? '--';
+
+  const { payload: metricsPayload, message: metricsMessage } = useMqttTopic('gatewayMetrics');
+
+  const localZoneOn = metricsPayload
+    ? getZoneActivatedState(metricsPayload, CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId)
+    : null;
+  const remoteZoneOn = metricsPayload
+    ? getZoneActivatedState(metricsPayload, CARLO_GAVAZZI_GATEWAY_CONFIG.remoteZoneActivated.deviceId)
+    : null;
+
+  const connectionValue = localZoneOn === true ? 'Local' : remoteZoneOn === true ? 'Remote' : '--';
+
+  const [pendingZoneCmd, setPendingZoneCmd] = useState<{
+    cmd: CarloGavazziSwitchCommandName;
+    requestedLabel: string;
+    sentAt: number;
+  } | null>(null);
+  const [zoneFeedback, setZoneFeedback] = useState<'success' | 'error' | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearFeedbackTimer = useCallback(() => {
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+  }, []);
+
+  // Confirmed by metrics: expected value matches incoming main signal
+  useEffect(() => {
+    if (!pendingZoneCmd || localZoneOn === null) {
+      return;
+    }
+
+    const expectedOn = pendingZoneCmd.cmd === 'On';
+
+    if (localZoneOn === expectedOn) {
+      recordLatencySample({
+        label: pendingZoneCmd.requestedLabel,
+        requestTopicKey: 'gatewayOtCommand',
+        responseTopicKey: 'gatewayMetrics',
+        startedAt: pendingZoneCmd.sentAt,
+        completedAt: metricsMessage?.receivedAt ?? Date.now(),
+      });
+      const feedbackTimer = setTimeout(() => {
+        setPendingZoneCmd(null);
+        clearFeedbackTimer();
+        setZoneFeedback('success');
+        feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 2000);
+      }, 0);
+
+      return () => clearTimeout(feedbackTimer);
+    }
+  }, [clearFeedbackTimer, localZoneOn, metricsMessage?.receivedAt, pendingZoneCmd, recordLatencySample]);
+
+  // Timeout: 8s without metrics confirmation → revert + error
+  useEffect(() => {
+    if (!pendingZoneCmd) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setPendingZoneCmd(null);
+      setZoneFeedback('error');
+      feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 3000);
+    }, 8000);
+
+    return () => clearTimeout(timer);
+  }, [pendingZoneCmd]);
+
+  // Clear pending when MQTT disconnects
+  useEffect(() => {
+    if (status !== 'connected') {
+      const clearPendingTimer = setTimeout(() => {
+        setPendingZoneCmd(null);
+      }, 0);
+
+      return () => clearTimeout(clearPendingTimer);
+    }
+  }, [status]);
+
+  // Cleanup on unmount
+  useEffect(() => () => clearFeedbackTimer(), [clearFeedbackTimer]);
+
+  // Optimistic display: show pending cmd direction while waiting
+  const displayedZoneOn =
+    pendingZoneCmd !== null ? pendingZoneCmd.cmd === 'On' : localZoneOn ?? false;
+
+  const handleLocalZoneToggle = useCallback(async () => {
+    if (status !== 'connected') {
+      return;
+    }
+
+    const nextCmd: CarloGavazziSwitchCommandName = displayedZoneOn ? 'Off' : 'On';
+
+    try {
+      await publishTopic(
+        'gatewayOtCommand',
+        { id: CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId, cmd: nextCmd },
+        { qos: 0, retain: false }
+      );
+      setPendingZoneCmd({
+        cmd: nextCmd,
+        requestedLabel: `Local Zone ${nextCmd}`,
+        sentAt: Date.now(),
+      });
+      setZoneFeedback(null);
+    } catch {
+      setZoneFeedback('error');
+    }
+  }, [displayedZoneOn, publishTopic, status]);
+
+  const statCards = useMemo<HomeStatCardConfig[]>(
+    () => [
+      {
+        title: 'Local/Remote\nConnections',
+        iconName: 'zap',
+        value: connectionValue,
+        unit: '',
+      },
+      {
+        title: 'Broker\nProtocol',
+        iconName: 'activity',
+        value: brokerTransportLabel,
+        unit: '/MQTT'
+      },
+      {
+        title: 'Response\nTime',
+        iconName: 'clock',
+        value: responseTimeValue,
+        unit: 'ms',
+      },
+      {
+        title: 'Distance\nto Device',
+        iconName: 'map-pin',
+        value: 108,
+        unit: 'Km',
+      },
+    ],
+    [brokerTransportLabel, connectionValue, responseTimeValue]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -39,7 +235,7 @@ export default function HomeScreen() {
             </View>
             <View style={styles.statusRow}>
               <View style={styles.dot} />
-              <Text style={styles.subtitle}>IMOX 2026</Text>
+              <Text style={styles.subtitle}>Batam, Riau Island</Text>
             </View>
           </View>
           <View style={styles.headerIcons}>
@@ -62,14 +258,6 @@ export default function HomeScreen() {
               autoPlay
               loop
             />
-            {/* <View style={styles.unlockButtonOverlay}>
-              <TouchableOpacity style={styles.unlockButton}>
-                  <Text style={styles.unlockText}>Tap to Unlock</Text>
-                  <View style={styles.unlockIconWrapper}>
-                    <Feather name="unlock" size={16} color={AppColors.primary} />
-                </View>
-              </TouchableOpacity>
-            </View> */}
           </View>
         </View>
 
@@ -79,66 +267,14 @@ export default function HomeScreen() {
             <Text style={styles.batteryPercent}>{signal.value}</Text>
             <Text style={styles.batteryLabel}>{signal.label}</Text>
           </View>
-          <View style={styles.batteryVisualizer}>
-            {Array.from({ length: signal.totalBars }, (_, index) => {
-              const isActive = index < signal.activeBars;
-
-              return (
-                <View
-                  key={`signal-bar-${index}`}
-                  style={[styles.batteryBar, isActive && styles.batteryBarActive]}
-                />
-              );
-            })}
-          </View>
+          <SignalBarStrip activeBars={signal.activeBars} totalBars={signal.totalBars} />
         </View>
 
         {/* Stats Grid */}
         <View style={styles.grid}>
-          {/* Item 1 */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Active Data{"\n"}Streams</Text>
-              <View style={styles.statIconContainer}>
-                <Feather name="zap" size={14} color={AppColors.primary} />
-                
-              </View>
-            </View>
-            <Text style={styles.statValue}>7 <Text style={styles.statUnit}>Topics</Text></Text>
-          </View>
-
-          {/* Item 2 */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Energy{"\n"}Consumption</Text>
-              <View style={styles.statIconContainer}>
-                <Feather name="activity" size={14} color={AppColors.primary} />
-              </View>
-            </View>
-            <Text style={styles.statValue}>35 <Text style={styles.statUnit}>kWh</Text></Text>
-          </View>
-
-          {/* Item 3 */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Response{"\n"}Time</Text>
-              <View style={styles.statIconContainer}>
-                <Feather name="clock" size={14} color={AppColors.primary} />
-              </View>
-            </View>
-            <Text style={styles.statValue}>248 <Text style={styles.statUnit}>ms</Text></Text>
-          </View>
-
-          {/* Item 4 */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Text style={styles.statTitle}>Distance{"\n"}to Device</Text>
-              <View style={styles.statIconContainer}>
-                <Feather name="map-pin" size={14} color={AppColors.primary} />
-              </View>
-            </View>
-            <Text style={styles.statValue}>108 <Text style={styles.statUnit}>Km</Text></Text>
-          </View>
+          {statCards.map((card) => (
+            <HomeStatCard key={card.title} {...card} />
+          ))}
         </View>
         
         {/* Spacer for custom bottom tab */}
