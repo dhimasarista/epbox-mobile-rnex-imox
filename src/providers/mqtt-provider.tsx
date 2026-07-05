@@ -38,7 +38,7 @@ import {
 
 export type MqttConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 // Broker session can stay "connected" while the physical gateway has gone silent;
-// this window flags that the last heartbeat/metrics message is too old to trust.
+// this window flags that the last metrics message is too old to trust.
 export const GATEWAY_STALE_AFTER_MS = 60_000;
 export type MqttLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type MqttPublishOptions = Pick<IClientPublishOptions, 'qos' | 'retain'>;
@@ -140,10 +140,17 @@ function getFriendlyMqttErrorMessage(error: Error, brokerUrl: string) {
   const errorMessage = error.message || 'Unable to connect to MQTT broker.';
 
   if (errorMessage.includes('connack timeout')) {
-    return `MQTT connack timeout. Broker did not answer CONNECT on ${brokerUrl}. Check the exact WebSocket URL, protocol (ws:// or wss://), port, and path such as /mqtt.`;
+    return `MQTT connack timeout — broker did not answer CONNECT on ${brokerUrl}. Retrying…`;
   }
 
   return errorMessage;
+}
+
+// Errors where the mqtt client should keep its built-in reconnect running.
+// For permanent errors (bad credentials, protocol mismatch) we still hard-kill.
+function isMqttTransientError(error: Error) {
+  const msg = error.message ?? '';
+  return msg.includes('connack timeout') || msg.includes('connect ETIMEDOUT') || msg.includes('ECONNREFUSED');
 }
 
 export function MqttProvider({ children }: PropsWithChildren) {
@@ -459,11 +466,18 @@ export function MqttProvider({ children }: PropsWithChildren) {
         const errorMessage = getFriendlyMqttErrorMessage(error, brokerUrl);
 
         setLastError(errorMessage);
-        setStatus('error');
-        setStatusMessage(errorMessage);
         setConnectedAt(null);
         appendLog('error', errorMessage);
-        client.end(true);
+
+        if (isMqttTransientError(error)) {
+          // Let the client's reconnectPeriod handle retry — do not hard-kill.
+          setStatus('connecting');
+          setStatusMessage(errorMessage);
+        } else {
+          setStatus('error');
+          setStatusMessage(errorMessage);
+          client.end(true);
+        }
       });
     } catch (error) {
       const errorMessage =
@@ -484,14 +498,9 @@ export function MqttProvider({ children }: PropsWithChildren) {
   const endpointLabel = useMemo(() => getMqttEndpointLabel(settings), [settings]);
 
   const lastGatewaySignalAt = useMemo(() => {
-    const timestamps = [
-      topicMessages.gatewayHeartbeat?.receivedAt,
-      topicMessages.gatewayMetrics?.receivedAt,
-      topicMessages.gatewayState?.receivedAt,
-    ].filter((timestamp): timestamp is number => typeof timestamp === 'number');
-
-    return timestamps.length > 0 ? Math.max(...timestamps) : null;
-  }, [topicMessages.gatewayHeartbeat, topicMessages.gatewayMetrics, topicMessages.gatewayState]);
+    const receivedAt = topicMessages.gatewayMetrics?.receivedAt;
+    return typeof receivedAt === 'number' ? receivedAt : null;
+  }, [topicMessages.gatewayMetrics]);
 
   const [staleCheckNow, setStaleCheckNow] = useState(() => Date.now());
 

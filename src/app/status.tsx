@@ -243,7 +243,7 @@ export default function StatusScreen() {
           <View style={[styles.heroCard, { backgroundColor: AppColors.surfaceError, borderColor: '#F4B7B7', borderWidth: 1 }]}>
             <Text style={[styles.heroValue, { color: AppColors.error }]}>Gateway Stale</Text>
             <Text style={styles.heroLabel}>
-              Broker session is connected, but no heartbeat/metrics from the gateway since{' '}
+              Broker session is connected, but no metrics from the gateway since{' '}
               {formatConnectedTimestamp(lastGatewaySignalAt)}. The physical device may be offline.
             </Text>
           </View>

@@ -106,11 +106,6 @@ export type AccommodationRoomZoneHeatingState = {
 };
 
 export type MqttTopicPayloadMap = {
-  gatewayHeartbeat: MqttFlexiblePayload;
-  gatewayState: MqttFlexiblePayload;
-  gatewayAlarm: MqttFlexiblePayload;
-  gatewayPowerTelemetry: MqttFlexiblePayload;
-  gatewayRestartCommand: MqttFlexiblePayload;
   gatewayMetrics: CarloGavazziMetricsPayload;
   gatewayOtCommand: CarloGavazziGatewayCommandPayload;
 };
@@ -166,12 +161,13 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
       },
     },
   },
-  // TODO(engineering): placeholder device IDs — fire fighting room's actual
-  // Modbus/counter IDs on the gateway have not been provided yet. Replace
-  // these two values once confirmed; nothing else needs to change.
   fireFightingRoom: {
+    // Device 6563 covers both DI and DO under one device entry in
+    // gatewayMetrics. It exposes (at least) two signals — one for the DI
+    // word and one for the DO word. Signal index/name TBD by engineering.
+    // The same id (6563) is used as the OT command target for SetValue.
     doWord: {
-      deviceId: -1,
+      deviceId: 6563,
     },
   },
 } as const;
@@ -256,44 +252,6 @@ function createJsonTopicDefinition<TKey extends MqttTopicKey>(
 }
 
 export const MQTT_TOPICS = {
-  gatewayHeartbeat: createFlexibleTopicDefinition({
-    key: 'gatewayHeartbeat',
-    topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/status/heartbeat`,
-    label: 'Gateway Heartbeat',
-    description: 'Periodic heartbeat emitted by the Carlo Gavazzi gateway.',
-    direction: 'subscribe',
-  }),
-  gatewayState: createFlexibleTopicDefinition({
-    key: 'gatewayState',
-    topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/status/state`,
-    label: 'Gateway State',
-    description: 'Current state or lifecycle updates from the gateway.',
-    direction: 'subscribe',
-  }),
-  gatewayAlarm: createFlexibleTopicDefinition({
-    key: 'gatewayAlarm',
-    topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/event/alarm`,
-    label: 'Gateway Alarm',
-    description: 'Alarm and fault events published by the gateway.',
-    direction: 'subscribe',
-    // QoS 1: alarm events must not be silently dropped on a flaky connection.
-    qos: 1,
-  }),
-  gatewayPowerTelemetry: createFlexibleTopicDefinition({
-    key: 'gatewayPowerTelemetry',
-    topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/telemetry/power`,
-    label: 'Power Telemetry',
-    description: 'Electrical telemetry stream for the selected edge gateway.',
-    direction: 'subscribe',
-  }),
-  gatewayRestartCommand: createFlexibleTopicDefinition({
-    key: 'gatewayRestartCommand',
-    topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/cmd/restart`,
-    label: 'Gateway Restart Command',
-    description: 'Restart command channel for the gateway.',
-    direction: 'publish',
-    retain: false,
-  }),
   gatewayMetrics: createJsonTopicDefinition({
     key: 'gatewayMetrics',
     topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/metrics`,
@@ -307,9 +265,7 @@ export const MQTT_TOPICS = {
     label: 'Gateway OT Command',
     description: 'Carlo Gavazzi command channel used by station controls and alarm actions.',
     direction: 'publish',
-    // QoS 1: commands here include alarm reset/acknowledge and relay switches,
-    // which must not be silently dropped on a flaky connection.
-    qos: 1,
+    qos: 0,
     retain: false,
   }),
 } satisfies {

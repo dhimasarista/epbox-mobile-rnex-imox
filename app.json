@@ -31,15 +31,16 @@
           "style": "light"
         }
       ],
-        [
-          "expo-splash-screen",
-          {
-            "backgroundColor": "#208AEF",
-            "image": "./assets/images/image.png",
-            "imageWidth": 180
-          }
-        ],
-      "expo-secure-store"
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#208AEF",
+          "image": "./assets/images/image.png",
+          "imageWidth": 180
+        }
+      ],
+      "expo-secure-store",
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true,

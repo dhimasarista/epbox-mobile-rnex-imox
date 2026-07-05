@@ -32,7 +32,7 @@ const ACCOMMODATION_TEMP_WARNING_C = 40;
 const ACCOMMODATION_TEMP_ALERT_C = 55;
 const ACCOMMODATION_TEMP_MAX_C = 120;
 const COMMAND_DEBOUNCE_MS = 250;
-const ALARM_WRITE_GUARD_MS = 5_000;
+const ALARM_WRITE_GUARD_MS = 5_000; // silent expiry — no countdown shown
 
 type AccommodationEditableKey = 'smokeDetected' | 'temperatureValue';
 type PendingCounterCommand = {
@@ -46,7 +46,7 @@ type PendingAlarmCommand = {
   cmd: CarloGavazziAlarmCommandName;
   requestedLabel: string;
   sentAt: number;
-  baselineSignalAt: number | null;
+  baselineReceivedAt: number | null;
 };
 // Only the command that was just sent is write-guarded; other alarm buttons
 // (e.g. an emergency Reset while Acknowledge is still pending ack) stay usable.
@@ -110,9 +110,6 @@ function formatEventTime(timestamp: number | null) {
   });
 }
 
-function formatAlarmWriteWindow(milliseconds: number) {
-  return `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
-}
 
 function formatZoneTemperatureMetric(value: number | null, unit: string) {
   if (value === null) {
@@ -745,13 +742,20 @@ function AccommodationSourceSection({
 
 export default function AccommodationRoom() {
   const { latestLatencySample, publishTopic, recordLatencySample, status } = useMqtt();
+  const recordLatencySampleRef = useRef(recordLatencySample);
+  recordLatencySampleRef.current = recordLatencySample;
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const [draftForm, setDraftForm] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
   const [confirmedForm, setConfirmedForm] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
   const [pendingCommands, setPendingCommands] = useState<PendingCounterCommandMap>({});
   const [pendingAlarmCommands, setPendingAlarmCommands] = useState<PendingAlarmCommandMap>({});
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
-  const [alarmClockNow, setAlarmClockNow] = useState(() => Date.now());
+  const alarmExpireTimeoutsRef = useRef<Map<CarloGavazziAlarmCommandName, ReturnType<typeof setTimeout>>>(new Map());
+  // Refs so effects can read latest state without triggering re-runs.
+  const pendingCommandsRef = useRef(pendingCommands);
+  pendingCommandsRef.current = pendingCommands;
+  const pendingAlarmCommandsRef = useRef(pendingAlarmCommands);
+  pendingAlarmCommandsRef.current = pendingAlarmCommands;
   const hasHydratedRef = useRef(false);
   const temperatureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
@@ -802,31 +806,12 @@ export default function AccommodationRoom() {
           },
     [metricsTopic.payload]
   );
-  const getAlarmWriteWindowRemainingMs = useCallback(
-    (command: CarloGavazziAlarmCommandName) => {
-      const pending = pendingAlarmCommands[command];
-
-      if (!pending) {
-        return 0;
-      }
-
-      return Math.max(0, pending.sentAt + ALARM_WRITE_GUARD_MS - alarmClockNow);
-    },
-    [alarmClockNow, pendingAlarmCommands]
-  );
-  const activeAlarmWriteWindows = useMemo(
-    () =>
-      (Object.keys(pendingAlarmCommands) as CarloGavazziAlarmCommandName[])
-        .map((command) => ({ command, remainingMs: getAlarmWriteWindowRemainingMs(command) }))
-        .filter((entry) => entry.remainingMs > 0),
-    [getAlarmWriteWindowRemainingMs, pendingAlarmCommands]
-  );
-  const isAnyAlarmWriteWindowActive = activeAlarmWriteWindows.length > 0;
+  const isAnyAlarmWriteWindowActive = Object.keys(pendingAlarmCommands).length > 0;
 
   const sendSetValueCommand = useCallback(
     async (field: AccommodationEditableKey, nextMetricValue: number, requestedLabel: string) => {
       if (status !== 'connected') {
-        setLastCommandError(`MQTT disconnected. Unable to send ${requestedLabel}.`);
+        setLastCommandError(`MQTT disconnected \n ${requestedLabel}.`);
         return;
       }
 
@@ -863,18 +848,12 @@ export default function AccommodationRoom() {
   const sendAlarmCommand = useCallback(
     async (command: CarloGavazziAlarmCommandName, requestedLabel: string) => {
       if (status !== 'connected') {
-        setLastCommandError(`MQTT disconnected. Unable to send ${requestedLabel}.`);
+        setLastCommandError(`Disconnected \n ${requestedLabel}.`);
         return;
       }
 
-      const remainingMs = getAlarmWriteWindowRemainingMs(command);
-
-      if (remainingMs > 0) {
-        setLastCommandError(
-          `UWP write window is still active. Wait ${formatAlarmWriteWindow(
-            remainingMs
-          )} before sending ${requestedLabel} again.`
-        );
+      if (pendingAlarmCommands[command]) {
+        setLastCommandError(`${requestedLabel} is already in flight — waiting for gateway response.`);
         return;
       }
 
@@ -890,21 +869,29 @@ export default function AccommodationRoom() {
 
         setPendingAlarmCommands((current) => ({
           ...current,
-          [command]: {
-            cmd: command,
-            requestedLabel,
-            sentAt,
-            baselineSignalAt: alarmState.lastSignalAt,
-          },
+          [command]: { cmd: command, requestedLabel, sentAt, baselineReceivedAt: metricsReceivedAt },
         }));
         setLastCommandError(null);
+
+        // Silent expiry: clear this command after 5s if metrics never confirm it.
+        const expireId = setTimeout(() => {
+          alarmExpireTimeoutsRef.current.delete(command);
+          setPendingAlarmCommands((current) => {
+            const next = { ...current };
+            delete next[command];
+            return next;
+          });
+          setLastCommandError(null);
+        }, ALARM_WRITE_GUARD_MS);
+
+        alarmExpireTimeoutsRef.current.set(command, expireId);
       } catch (error) {
         setLastCommandError(
           error instanceof Error ? error.message : `Unable to send ${requestedLabel}.`
         );
       }
     },
-    [alarmState.lastSignalAt, getAlarmWriteWindowRemainingMs, publishTopic, status]
+    [metricsReceivedAt, pendingAlarmCommands, publishTopic, status]
   );
 
   useEffect(() => {
@@ -928,23 +915,6 @@ export default function AccommodationRoom() {
     };
   }, [clearTemperatureDebounce]);
 
-  useEffect(() => {
-    if (!isAnyAlarmWriteWindowActive) {
-      return;
-    }
-
-    const initialTickId = setTimeout(() => {
-      setAlarmClockNow(Date.now());
-    }, 0);
-    const intervalId = setInterval(() => {
-      setAlarmClockNow(Date.now());
-    }, 250);
-
-    return () => {
-      clearTimeout(initialTickId);
-      clearInterval(intervalId);
-    };
-  }, [isAnyAlarmWriteWindowActive]);
 
   useEffect(() => {
     if (!hasHydratedRef.current) {
@@ -998,15 +968,16 @@ export default function AccommodationRoom() {
       metricsState.temperatureNumber === null ? null : Math.round(metricsState.temperatureNumber);
     const nextSmokeMetricValue =
       metricsState.smokeDetected === null ? null : metricsState.smokeDetected ? 1 : 0;
+    const latestPendingCommands = pendingCommandsRef.current;
 
     const temperatureAcked =
-      pendingCommands.temperatureValue !== undefined &&
+      latestPendingCommands.temperatureValue !== undefined &&
       nextTemperatureMetricValue !== null &&
-      pendingCommands.temperatureValue.expectedMetricValue === nextTemperatureMetricValue;
+      latestPendingCommands.temperatureValue.expectedMetricValue === nextTemperatureMetricValue;
     const smokeAcked =
-      pendingCommands.smokeDetected !== undefined &&
+      latestPendingCommands.smokeDetected !== undefined &&
       nextSmokeMetricValue !== null &&
-      pendingCommands.smokeDetected.expectedMetricValue === nextSmokeMetricValue;
+      latestPendingCommands.smokeDetected.expectedMetricValue === nextSmokeMetricValue;
 
     const processMetricsTimer = setTimeout(() => {
       if (metricsState.temperatureValue !== null || metricsState.smokeDetected !== null) {
@@ -1029,12 +1000,12 @@ export default function AccommodationRoom() {
 
           if (
             metricsState.temperatureValue !== null &&
-            (!pendingCommands.temperatureValue || temperatureAcked)
+            (!latestPendingCommands.temperatureValue || temperatureAcked)
           ) {
             next.temperatureValue = metricsState.temperatureValue;
           }
 
-          if (metricsState.smokeDetected !== null && (!pendingCommands.smokeDetected || smokeAcked)) {
+          if (metricsState.smokeDetected !== null && (!latestPendingCommands.smokeDetected || smokeAcked)) {
             next.smokeDetected = metricsState.smokeDetected;
           }
 
@@ -1044,15 +1015,15 @@ export default function AccommodationRoom() {
 
       if (temperatureAcked || smokeAcked) {
         const ackedCommands = [
-          temperatureAcked ? pendingCommands.temperatureValue ?? null : null,
-          smokeAcked ? pendingCommands.smokeDetected ?? null : null,
+          temperatureAcked ? latestPendingCommands.temperatureValue ?? null : null,
+          smokeAcked ? latestPendingCommands.smokeDetected ?? null : null,
         ]
           .filter((command): command is PendingCounterCommand => command !== null)
           .sort((left, right) => left.sentAt - right.sentAt);
         const latestAckedCommand = ackedCommands[ackedCommands.length - 1] ?? null;
 
         if (latestAckedCommand) {
-          recordLatencySample({
+          recordLatencySampleRef.current({
             label: latestAckedCommand.requestedLabel,
             requestTopicKey: 'gatewayOtCommand',
             responseTopicKey: 'gatewayMetrics',
@@ -1079,49 +1050,51 @@ export default function AccommodationRoom() {
     }, 0);
 
     return () => clearTimeout(processMetricsTimer);
-  }, [metricsReceivedAt, metricsTopic.payload, pendingCommands, recordLatencySample]);
+  }, [metricsReceivedAt, metricsTopic.payload]);
 
   useEffect(() => {
-    if (alarmState.lastSignalAt === null) {
+    if (metricsReceivedAt === null) {
       return;
     }
 
     const ackedCommands = (
-      Object.entries(pendingAlarmCommands) as [CarloGavazziAlarmCommandName, PendingAlarmCommand][]
+      Object.entries(pendingAlarmCommandsRef.current) as [CarloGavazziAlarmCommandName, PendingAlarmCommand][]
     ).filter(
       ([, pending]) =>
-        pending.baselineSignalAt === null || alarmState.lastSignalAt! > pending.baselineSignalAt
+        pending.baselineReceivedAt === null || metricsReceivedAt > pending.baselineReceivedAt
     );
 
     if (ackedCommands.length === 0) {
       return;
     }
 
-    const latestAcked = ackedCommands.sort((left, right) => left[1].sentAt - right[1].sentAt).pop()!;
+    // Cancel the 5s silent expiry timers — metrics arrived first.
+    ackedCommands.forEach(([command]) => {
+      const expireId = alarmExpireTimeoutsRef.current.get(command);
+      if (expireId !== undefined) {
+        clearTimeout(expireId);
+        alarmExpireTimeoutsRef.current.delete(command);
+      }
+    });
 
-    recordLatencySample({
+    const latestAcked = ackedCommands.sort((left, right) => left[1].sentAt - right[1].sentAt).pop()!;
+    recordLatencySampleRef.current({
       label: latestAcked[1].requestedLabel,
       requestTopicKey: 'gatewayOtCommand',
       responseTopicKey: 'gatewayMetrics',
       startedAt: latestAcked[1].sentAt,
-      completedAt: metricsReceivedAt ?? Date.now(),
+      completedAt: metricsReceivedAt,
     });
 
-    const clearAlarmPendingTimer = setTimeout(() => {
-      setPendingAlarmCommands((current) => {
-        const next = { ...current };
-
-        ackedCommands.forEach(([command]) => {
-          delete next[command];
-        });
-
-        return next;
+    setPendingAlarmCommands((current) => {
+      const next = { ...current };
+      ackedCommands.forEach(([command]) => {
+        delete next[command];
       });
-      setLastCommandError(null);
-    }, 0);
-
-    return () => clearTimeout(clearAlarmPendingTimer);
-  }, [alarmState.lastSignalAt, metricsReceivedAt, pendingAlarmCommands, recordLatencySample]);
+      return next;
+    });
+    setLastCommandError(null);
+  }, [metricsReceivedAt]);
 
   const handleSmokeDetectedChange = useCallback(
     (nextValue: boolean) => {
@@ -1164,8 +1137,8 @@ export default function AccommodationRoom() {
   const isSmokePending = pendingCommands.smokeDetected !== undefined;
   const isAlarmPending = Object.keys(pendingAlarmCommands).length > 0;
   const isAlarmCommandLocked = useCallback(
-    (command: CarloGavazziAlarmCommandName) => getAlarmWriteWindowRemainingMs(command) > 0,
-    [getAlarmWriteWindowRemainingMs]
+    (command: CarloGavazziAlarmCommandName) => !!pendingAlarmCommands[command],
+    [pendingAlarmCommands]
   );
   const isAnyPending = isTemperaturePending || isSmokePending || isAlarmPending;
   const lastMetricsAt = metricsReceivedAt;
@@ -1176,11 +1149,9 @@ export default function AccommodationRoom() {
       ? latestLatencySample.durationMs
       : null;
   const mqttLinkMeta = getMqttLinkMeta(status, latestAlarmRoundtripMs, isAlarmPending);
-  const writeWindowLabel = isAnyAlarmWriteWindowActive
-    ? formatAlarmWriteWindow(Math.max(...activeAlarmWriteWindows.map((entry) => entry.remainingMs)))
-    : 'Ready';
+  const writeWindowLabel = isAnyAlarmWriteWindowActive ? 'Sending…' : 'Ready';
   const writeWindowDetail = isAnyAlarmWriteWindowActive
-    ? 'Waiting time for writing'
+    ? 'Waiting for gateway response'
     : 'Next edge can be sent';
 
   const heroSyncLabel = useMemo(() => {
@@ -1223,7 +1194,7 @@ export default function AccommodationRoom() {
     }
 
     if (status !== 'connected') {
-      return 'MQTT disconnected. Toggle changes stay local until the broker reconnects.';
+      return 'Disconnected';
     }
 
     if (lastMetricsAt) {
@@ -1245,7 +1216,7 @@ export default function AccommodationRoom() {
     }
 
     if (status !== 'connected') {
-      return 'MQTT disconnected. Temperature chip stays on the last confirmed metrics value.';
+      return 'Disconnected';
     }
 
     if (lastMetricsAt) {
@@ -1279,16 +1250,8 @@ export default function AccommodationRoom() {
       return lastCommandError;
     }
 
-    if (isAnyAlarmWriteWindowActive) {
-      const remainingMs = Math.max(...activeAlarmWriteWindows.map((entry) => entry.remainingMs));
-
-      return `UWP write guard is active for ${formatAlarmWriteWindow(
-        remainingMs
-      )}. Repeated writes of the same command can be ignored until it expires.`;
-    }
-
     if (latestPendingAlarmCommand) {
-      return `${latestPendingAlarmCommand.requestedLabel} sent. Waiting for the next metrics response to confirm device state.`;
+      return `${latestPendingAlarmCommand.requestedLabel} sent — waiting for gateway metrics to confirm.`;
     }
 
     if (status !== 'connected') {
@@ -1300,31 +1263,18 @@ export default function AccommodationRoom() {
     }
 
     return 'Waiting for alarm metrics from the gateway.';
-  }, [
-    activeAlarmWriteWindows,
-    isAnyAlarmWriteWindowActive,
-    lastAlarmMetricsAt,
-    lastCommandError,
-    latestPendingAlarmCommand,
-    status,
-  ]);
+  }, [lastAlarmMetricsAt, lastCommandError, latestPendingAlarmCommand, status]);
 
   const alarmCommandHint = useMemo(() => {
     if (latestPendingAlarmCommand) {
-      const remainingMs = getAlarmWriteWindowRemainingMs(latestPendingAlarmCommand.cmd);
-
-      if (remainingMs > 0) {
-        return `Write window ${formatAlarmWriteWindow(remainingMs)}.`;
-      }
-
-      return `${latestPendingAlarmCommand.cmd} to device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}.`;
+      return `${latestPendingAlarmCommand.cmd} → device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}. Clears when metrics arrive or after 5s.`;
     }
 
     return 'Pulse actions like Reset or Acknowledge are safest for repeated retries.';
-  }, [getAlarmWriteWindowRemainingMs, latestPendingAlarmCommand]);
+  }, [latestPendingAlarmCommand]);
   const alarmBehaviorHint = useMemo(() => {
     if (isAnyAlarmWriteWindowActive) {
-      return `Wait the moment in ${ALARM_WRITE_GUARD_MS / 1000}s`;
+      return 'Command sent — clears automatically when gateway responds or after 5s.';
     }
 
     return 'If ResetOn, ResetOff, TestAlarmOn, or TestAlarmOff seem ignored, create a new edge first or use pulse commands such as Reset and Acknowledge.';
