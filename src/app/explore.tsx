@@ -58,10 +58,6 @@ export default function ExploreScreen() {
       return accommodationInputs.temperatureValue;
     }
 
-    if (roomId === 'fire-fighting-room') {
-      return '12 DO';
-    }
-
     return 'Standby';
   };
 

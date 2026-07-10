@@ -8,15 +8,14 @@ Legend: ✅ Sudah ada device MQTT | ⬜ Belum ada device MQTT
 
 ## Status Keseluruhan
 
-| Room | Route | IO Sudah Ada | IO Belum Ada | Total | MQTT |
-|------|-------|:------------:|:------------:|:-----:|------|
-| [Home](./home.md) | `/` | 2 | 3* | 5 | ✅ Terhubung |
-| [Pump Room](./pump-room.md) | `/stations/pump-room` | 0 | 9 | 9 | ❌ Local only |
-| [Accommodation Room](./accommodation-room.md) | `/stations/accommodation-room` | 20 | 3* | 23 | ✅ Terhubung |
-| [Fire-Fighting Room](./fire-fighting-room.md) | `/stations/fire-fighting-room` | 24 | 3* | 27 | ✅ Terhubung |
+| Room | Route | Tab | IO Sudah Ada | IO Belum Ada | Total | MQTT |
+|------|-------|-----|:------------:|:------------:|:-----:|------|
+| [Home](./home.md) | `/` | — | 2 | 3* | 5 | ✅ Terhubung |
+| [Pump Room – PLC](./pump-room.md) | `/stations/pump-room` | PLC | 24 | 3* | 27 | ✅ Terhubung |
+| [Pump Room – Inject](./pump-room.md) | `/stations/pump-room` | Inject Value | 0 | 9 | 9 | ❌ Local only |
+| [Accommodation Room](./accommodation-room.md) | `/stations/accommodation-room` | — | 20 | 3* | 23 | ✅ Terhubung |
 
-*IO "belum ada" di Home dan Accommodation Room adalah stat/flag lokal, bukan field instrument.  
-*IO "belum ada" di Fire-Fighting Room adalah channel potensial yang belum dipetakan ke bit.
+*IO "belum ada" di Home, Accommodation, dan Pump Room (PLC tab) adalah stat/flag lokal atau channel potensial yang belum dipetakan ke bit.
 
 ---
 
