@@ -1,17 +1,12 @@
 import { useNetworkSignal } from '@/hooks/use-network-signal';
 import { getMqttTransportLabel } from '@/lib/mqtt-settings';
-import {
-  CARLO_GAVAZZI_GATEWAY_CONFIG,
-  getZoneActivatedState,
-  type CarloGavazziSwitchCommandName,
-} from '@/lib/mqtt-topics';
-import { useMqtt, useMqttTopic } from '@/providers/mqtt-provider';
+import { useMqtt } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { getBannerHeight, styles } from '@/styles/screens/home.styles';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import LottieView from 'lottie-react-native';
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { useCallback, useMemo, useState, type ComponentProps } from 'react';
 import { ScrollView, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -69,132 +64,25 @@ export default function HomeScreen() {
     refreshIntervalMs: 2000,
   });
 
-  const { endpointLabel, latestLatencySample, publishTopic, recordLatencySample, status } = useMqtt();
+  const { endpointLabel, isGatewayStale, latestLatencySample, status } = useMqtt();
   const brokerTransportLabel = getMqttTransportLabel(endpointLabel);
   const responseTimeValue = latestLatencySample?.durationMs ?? '--';
 
-  const { payload: metricsPayload, message: metricsMessage } = useMqttTopic('gatewayMetrics');
-
-  const localZoneOn = metricsPayload
-    ? getZoneActivatedState(metricsPayload, CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId)
-    : null;
-  const remoteZoneOn = metricsPayload
-    ? getZoneActivatedState(metricsPayload, CARLO_GAVAZZI_GATEWAY_CONFIG.remoteZoneActivated.deviceId)
-    : null;
-
-  const connectionValue = localZoneOn === true ? 'Local' : remoteZoneOn === true ? 'Remote' : '--';
-
-  const [pendingZoneCmd, setPendingZoneCmd] = useState<{
-    cmd: CarloGavazziSwitchCommandName;
-    requestedLabel: string;
-    sentAt: number;
-  } | null>(null);
-  const [zoneFeedback, setZoneFeedback] = useState<'success' | 'error' | null>(null);
-  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearFeedbackTimer = useCallback(() => {
-    if (feedbackTimerRef.current) {
-      clearTimeout(feedbackTimerRef.current);
-      feedbackTimerRef.current = null;
-    }
-  }, []);
-
-  // Confirmed by metrics: expected value matches incoming main signal
-  useEffect(() => {
-    if (!pendingZoneCmd || localZoneOn === null) {
-      return;
-    }
-
-    const expectedOn = pendingZoneCmd.cmd === 'On';
-
-    if (localZoneOn === expectedOn) {
-      recordLatencySample({
-        label: pendingZoneCmd.requestedLabel,
-        requestTopicKey: 'gatewayOtCommand',
-        responseTopicKey: 'gatewayMetrics',
-        startedAt: pendingZoneCmd.sentAt,
-        completedAt: metricsMessage?.receivedAt ?? Date.now(),
-      });
-      const feedbackTimer = setTimeout(() => {
-        setPendingZoneCmd(null);
-        clearFeedbackTimer();
-        setZoneFeedback('success');
-        feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 2000);
-      }, 0);
-
-      return () => clearTimeout(feedbackTimer);
-    }
-  }, [clearFeedbackTimer, localZoneOn, metricsMessage?.receivedAt, pendingZoneCmd, recordLatencySample]);
-
-  // Timeout: 8s without metrics confirmation → revert + error
-  useEffect(() => {
-    if (!pendingZoneCmd) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      setPendingZoneCmd(null);
-      setZoneFeedback('error');
-      feedbackTimerRef.current = setTimeout(() => setZoneFeedback(null), 3000);
-    }, 8000);
-
-    return () => clearTimeout(timer);
-  }, [pendingZoneCmd]);
-
-  // Clear pending when MQTT disconnects
-  useEffect(() => {
-    if (status !== 'connected') {
-      const clearPendingTimer = setTimeout(() => {
-        setPendingZoneCmd(null);
-      }, 0);
-
-      return () => clearTimeout(clearPendingTimer);
-    }
-  }, [status]);
-
-  // Cleanup on unmount
-  useEffect(() => () => clearFeedbackTimer(), [clearFeedbackTimer]);
-
-  // Optimistic display: show pending cmd direction while waiting
-  const displayedZoneOn =
-    pendingZoneCmd !== null ? pendingZoneCmd.cmd === 'On' : localZoneOn ?? false;
-
-  const handleLocalZoneToggle = useCallback(async () => {
-    if (status !== 'connected') {
-      return;
-    }
-
-    const nextCmd: CarloGavazziSwitchCommandName = displayedZoneOn ? 'Off' : 'On';
-
-    try {
-      await publishTopic(
-        'gatewayOtCommand',
-        { id: CARLO_GAVAZZI_GATEWAY_CONFIG.localZoneActivated.deviceId, cmd: nextCmd }
-      );
-      setPendingZoneCmd({
-        cmd: nextCmd,
-        requestedLabel: `Local Zone ${nextCmd}`,
-        sentAt: Date.now(),
-      });
-      setZoneFeedback(null);
-    } catch {
-      setZoneFeedback('error');
-    }
-  }, [displayedZoneOn, publishTopic, status]);
+  const gatewayStatusValue =
+    status !== 'connected' ? 'Offline' : isGatewayStale ? 'Stale' : 'Online';
 
   const statCards = useMemo<HomeStatCardConfig[]>(
     () => [
       {
-        title: 'Local/Remote\nConnections',
-        iconName: 'zap',
-        value: connectionValue,
-        unit: '',
+        title: 'Gateway\nStatus',
+        iconName: 'radio',
+        value: gatewayStatusValue,
       },
       {
         title: 'Broker\nProtocol',
         iconName: 'activity',
         value: brokerTransportLabel,
-        unit: '/MQTT'
+        unit: '/MQTT',
       },
       {
         title: 'Response\nTime',
@@ -209,7 +97,7 @@ export default function HomeScreen() {
         unit: 'Km',
       },
     ],
-    [brokerTransportLabel, connectionValue, responseTimeValue]
+    [brokerTransportLabel, gatewayStatusValue, responseTimeValue]
   );
 
   useFocusEffect(
@@ -248,7 +136,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* vessel Card */}
+        {/* Vessel Card */}
         <View style={styles.bannerCard}>
           <View style={[styles.bannerBackground, { height: bannerHeight }]}>
             <LottieView
@@ -260,7 +148,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Battery Card */}
+        {/* Signal Card */}
         <View style={styles.batteryCard}>
           <View>
             <Text style={styles.batteryPercent}>{signal.value}</Text>
@@ -275,8 +163,7 @@ export default function HomeScreen() {
             <HomeStatCard key={card.title} {...card} />
           ))}
         </View>
-        
-        {/* Spacer for custom bottom tab */}
+
         <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>

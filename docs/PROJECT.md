@@ -914,9 +914,11 @@ Saat ini **tidak ada unit test atau integration test**. Logic kompleks yang seba
 ## Referensi Dokumen Terkait
 
 - [`docs/device-id-registry.md`](./device-id-registry.md) — Registry terpusat semua device ID gateway (3549, 3585, 3667, 3794, 3819, 4147, 6563)
-- [`docs/io-list-pump-room.md`](./io-list-pump-room.md) — IO list Pump Room (sensor inputs + dashboard outputs)
-- [`docs/io-list-accommodation-room.md`](./io-list-accommodation-room.md) — IO list Accommodation Room (devices 3549, 3585, 3667, 4147)
-- [`docs/io-list-fire-fighting-room.md`](./io-list-fire-fighting-room.md) — IO list Fire-Fighting Room (12 DI + 12 DO, device 6563)
+- [`docs/io-lists/`](./io-lists/README.md) — IO list per room dengan status koneksi MQTT (✅/⬜)
+  - [`home.md`](./io-lists/home.md) — Home screen (device 3819, 3794)
+  - [`pump-room.md`](./io-lists/pump-room.md) — Pump Room (local only, 0/9 terhubung)
+  - [`accommodation-room.md`](./io-lists/accommodation-room.md) — Accommodation Room (20/20 terhubung)
+  - [`fire-fighting-room.md`](./io-lists/fire-fighting-room.md) — Fire-Fighting Room (24/24 terhubung)
 - [`docs/accommodation-room-mqtt.md`](./accommodation-room-mqtt.md) — Alur MQTT accommodation room
 - [`docs/fire-fighting-room-mqtt.md`](./fire-fighting-room-mqtt.md) — Alur MQTT fire-fighting room, layout bit lengkap
 - [`docs/Modbus.pdf`](./Modbus.pdf) — Modbus slave map Carlo Gavazzi UWP-4.0 (F29 PLC SIEMENS)
