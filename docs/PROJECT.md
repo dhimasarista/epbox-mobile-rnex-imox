@@ -25,6 +25,7 @@ Aplikasi mobile monitoring & kontrol sistem mekanikal-elektrikal kapal berbasis 
 11. [Sistem Desain](#11-sistem-desain)
 12. [Konvensi Kode](#12-konvensi-kode)
 13. [Konfigurasi & Deployment](#13-konfigurasi--deployment)
+14. [Catatan Analisis & Area Perhatian](#14-catatan-analisis--area-perhatian)
 
 ---
 
@@ -878,9 +879,45 @@ Semua konfigurasi (URL broker, credentials) dimasukkan oleh operator melalui Set
 
 ---
 
+## 14. Catatan Analisis & Area Perhatian
+
+### Risiko yang Perlu Ditangani Sebelum Production
+
+| Prioritas | Area | Isu | Rekomendasi |
+|-----------|------|-----|-------------|
+| Tinggi | Auth | `DEMO_CREDENTIALS = { id: '', password: '' }` — login tanpa isi apapun | Ganti dengan credentials nyata atau mekanisme auth yang aman |
+| Sedang | Config | Device ID hardcoded (3549, 3585, 3667, dll.) di `mqtt-topics.ts` | Pindahkan ke config file terpisah jika hardware bisa berubah |
+| Sedang | UX | Command gagal (5s expiry) tidak menampilkan error ke user | Tambahkan feedback visual untuk silent expiry |
+| Rendah | Validasi | Payload MQTT tidak divalidasi dengan schema (Zod/ArkType) | Tambahkan runtime validation di entry point `mergeCarloGavazziMetricsPayload` |
+| Rendah | Offline | Command yang dikirim saat disconnect langsung hilang | Pertimbangkan command queue untuk pengiriman ulang |
+| Rendah | Layout | `BottomTabInset` hardcoded (50 iOS, 80 Android) | Gunakan `useSafeAreaInsets()` dinamis |
+
+### Kekuatan Arsitektur
+
+- **Type safety penuh** — strict TypeScript, semua payload ter-typed
+- **MQTT robust** — auto-reconnect, transient/permanent error distinction, connack timeout tidak kill client
+- **Anti-loop patterns** — ref-as-callback + ref-for-state sudah diterapkan di semua effect yang berisiko
+- **Optimistic UI** — draft/confirmed dual form mencegah jank saat operator mengirim perintah
+- **Payload merge incremental** — gateway bisa kirim partial update tanpa kehilangan sinyal lain
+- **Cross-platform storage** — secure store (native) / localStorage (web) diabstraksi dengan interface yang sama
+
+### Test Coverage
+
+Saat ini **tidak ada unit test atau integration test**. Logic kompleks yang sebaiknya di-cover:
+- `mergeCarloGavazziMetricsPayload()` — edge case partial update
+- `unpackChannels()` + `setChannelBit()` — bit packing/unpacking
+- Write window ACK logic (baseline pattern) di accommodation room dan fire-fighting room
+- `isMqttTransientError()` — klasifikasi error MQTT
+
+---
+
 ## Referensi Dokumen Terkait
 
-- [`docs/accommodation-room-mqtt.md`](./accommodation-room-mqtt.md) — Layout bit DI/DO accommodation room
-- [`docs/fire-fighting-room-mqtt.md`](./fire-fighting-room-mqtt.md) — Layout bit DI/DO fire-fighting room, alur MQTT lengkap
+- [`docs/device-id-registry.md`](./device-id-registry.md) — Registry terpusat semua device ID gateway (3549, 3585, 3667, 3794, 3819, 4147, 6563)
+- [`docs/io-list-pump-room.md`](./io-list-pump-room.md) — IO list Pump Room (sensor inputs + dashboard outputs)
+- [`docs/io-list-accommodation-room.md`](./io-list-accommodation-room.md) — IO list Accommodation Room (devices 3549, 3585, 3667, 4147)
+- [`docs/io-list-fire-fighting-room.md`](./io-list-fire-fighting-room.md) — IO list Fire-Fighting Room (12 DI + 12 DO, device 6563)
+- [`docs/accommodation-room-mqtt.md`](./accommodation-room-mqtt.md) — Alur MQTT accommodation room
+- [`docs/fire-fighting-room-mqtt.md`](./fire-fighting-room-mqtt.md) — Alur MQTT fire-fighting room, layout bit lengkap
 - [`docs/Modbus.pdf`](./Modbus.pdf) — Modbus slave map Carlo Gavazzi UWP-4.0 (F29 PLC SIEMENS)
 - [`docs/mqtt_report (6).pdf`](./mqtt_report%20(6).pdf) — Device ID konfirmasi dari gateway

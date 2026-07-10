@@ -35,6 +35,7 @@ import {
   type MqttTopicKey,
   type MqttTopicPayloadMap,
 } from '@/lib/mqtt-topics';
+import { readMetricsCache, writeMetricsCache } from '@/lib/mqtt-cache';
 
 export type MqttConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 // Broker session can stay "connected" while the physical gateway has gone silent;
@@ -42,7 +43,7 @@ export type MqttConnectionState = 'idle' | 'connecting' | 'connected' | 'disconn
 export const GATEWAY_STALE_AFTER_MS = 60_000;
 export type MqttLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type MqttPublishOptions = Pick<IClientPublishOptions, 'qos' | 'retain'>;
-export type MqttMessageSource = 'broker' | 'local-publish';
+export type MqttMessageSource = 'broker' | 'local-publish' | 'cache';
 
 export type MqttLogEntry = {
   id: string;
@@ -253,6 +254,29 @@ export function MqttProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     void refreshSettings();
 
+    // Hydrate topicMessages from disk cache so screens show last known data
+    // immediately on cold start, before the first MQTT message arrives.
+    readMetricsCache().then((entry) => {
+      if (!entry) return;
+
+      const definition = MQTT_TOPICS.gatewayMetrics;
+      setTopicMessages((current) => {
+        // Do not overwrite a message that arrived from the broker already.
+        if (current.gatewayMetrics?.source === 'broker') return current;
+        return {
+          ...current,
+          gatewayMetrics: {
+            key: definition.key,
+            topic: definition.topic,
+            payload: entry.payload,
+            raw: '',
+            receivedAt: entry.cachedAt,
+            source: 'cache',
+          },
+        };
+      });
+    });
+
     return () => {
       disposeClient();
     };
@@ -404,6 +428,9 @@ export function MqttProvider({ children }: PropsWithChildren) {
                 previousMetricsPayload && previousMessage?.source === 'broker'
                   ? mergeCarloGavazziMetricsPayload(previousMetricsPayload, nextMetricsPayload)
                   : nextMetricsPayload;
+
+              // Persist to disk so cold-start shows last known data.
+              void writeMetricsCache(mergedPayload);
 
               return {
                 ...currentMessages,
