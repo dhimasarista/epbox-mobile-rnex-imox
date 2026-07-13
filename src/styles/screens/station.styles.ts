@@ -555,6 +555,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: AppSpacing.sm,
     marginTop: AppSpacing.sm,
+    paddingBottom: AppSpacing.lg,
   },
   statusSegmentButton: {
     flex: 1,

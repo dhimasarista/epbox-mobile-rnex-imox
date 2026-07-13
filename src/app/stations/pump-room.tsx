@@ -1,5 +1,5 @@
 import { Slider } from '@expo/ui/community/slider';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -30,19 +30,9 @@ import { getSignalPalette, styles as stationStyles, type SignalTone } from '@/st
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type ActiveTab = 'plc' | 'inject';
-type PumpRoomField = (typeof PUMP_ROOM_PLC_FIELDS)[number];
-type FieldUpdater = (key: PumpRoomPlcInputKey, value: string) => void;
-type FlowRateStepper = (delta: number) => void;
 type StepperChipTone = 'default' | 'stable' | 'warning' | 'danger';
-type DashboardStatusCode = 0 | 1 | 2;
-type PumpRoomDashboardInputs = {
-  temperatureAlarm: boolean;
-  currentStatus: DashboardStatusCode;
-  ampereStatus: string;
-  pressurePump1: string;
-  pressurePump2: string;
-  dischargeFlowRate: string;
-};
+type DerivedAlarmLevel = 'clear' | 'warning' | 'danger';
+type DerivedAlarm = { level: DerivedAlarmLevel; conditions: string[] };
 
 // ─── PLC IO Definitions ──────────────────────────────────────────────────────
 
@@ -112,44 +102,24 @@ const DO_BIT_MAP: BitChannelMap<DoKey> = {
 // ─── Inject Value Constants ───────────────────────────────────────────────────
 
 const PRESSURE_MIN_BAR = 0;
+const PRESSURE_LOW_BAR = 2;
 const PRESSURE_WARNING_BAR = 7.5;
 const PRESSURE_DANGER_BAR = 10.2;
 const PRESSURE_SLIDER_MAX_BAR = 16;
 const FLOW_RATE_FIELD_KEY: PumpRoomPlcInputKey = 'dischargeFlowRate';
 const FLOW_RATE_MIN_M3H = 0;
 const FLOW_RATE_STEP_M3H = 1;
-const AMPERE_MIN_A = 0;
-const AMPERE_MAX_A = 160;
-const AMPERE_STEP_A = 1;
-const DASHBOARD_STATUS_OPTIONS = [
-  { value: 0 as DashboardStatusCode, label: 'Off',     icon: 'power' as const },
-  { value: 1 as DashboardStatusCode, label: 'Running', icon: 'activity' as const },
-  { value: 2 as DashboardStatusCode, label: 'Tripped', icon: 'alert-triangle' as const },
-];
-const DEFAULT_DASHBOARD_INPUTS: PumpRoomDashboardInputs = {
-  temperatureAlarm: true,
-  currentStatus: 1,
-  ampereStatus: '76',
-  pressurePump1: '7.4',
-  pressurePump2: '7.1',
-  dischargeFlowRate: '168',
-};
+const FLOW_BLOCKAGE_THRESHOLD_M3H = 50;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function clampPressure(v: number) { return Math.min(Math.max(Number.isFinite(v) ? v : 0, PRESSURE_MIN_BAR), PRESSURE_SLIDER_MAX_BAR); }
 function parsePressure(v: string)  { return clampPressure(Number.parseFloat(v.replace(',', '.'))); }
 function formatPressure(v: number) { return `${clampPressure(v).toFixed(1)} bar`; }
-function formatPressureNum(v: number) { return clampPressure(v).toFixed(1); }
 
 function clampFlow(v: number)  { return Math.max(Number.isFinite(v) ? Math.round(v) : 0, FLOW_RATE_MIN_M3H); }
 function parseFlow(v: string)  { const m = v.trim().match(/^\d+/); return clampFlow(m ? parseInt(m[0], 10) : NaN); }
 function formatFlow(v: number) { return `${clampFlow(v)} m3/h`; }
-
-function clampAmpere(v: number) { return Math.min(Math.max(Number.isFinite(v) ? Math.round(v) : 0, AMPERE_MIN_A), AMPERE_MAX_A); }
-function parseAmpere(v: string) { const m = v.trim().match(/^\d+/); return clampAmpere(m ? parseInt(m[0], 10) : NaN); }
-
-function getLeadingDecimal(v: string) { const m = v.trim().match(/^\d+(?:[.,]\d+)?/); return m ? m[0].replace(',', '.') : '0'; }
 
 function getPressureTone(v: number): SignalTone {
   if (v >= PRESSURE_DANGER_BAR) return 'danger';
@@ -157,10 +127,36 @@ function getPressureTone(v: number): SignalTone {
   return 'normal';
 }
 
-function getStatusAccent(v: DashboardStatusCode) {
-  if (v === 1) return { fill: AppColors.surfaceSuccess, border: '#9BD7B6', icon: AppColors.success, lamp: AppColors.success };
-  if (v === 2) return { fill: AppColors.surfaceError,   border: '#F6B1B1', icon: AppColors.error,   lamp: AppColors.error   };
-  return           { fill: AppColors.surfaceMuted,     border: AppColors.border, icon: AppColors.textSubtle, lamp: AppColors.textSubtle };
+function getDerivedAlarm(form: PumpRoomPlcInputs, pumpRunning: boolean): DerivedAlarm {
+  const p1 = parsePressure(form.pressurePump1);
+  const p2 = parsePressure(form.pressurePump2);
+  const flow = parseFlow(form.dischargeFlowRate);
+  const conditions: string[] = [];
+  let level: DerivedAlarmLevel = 'clear';
+
+  if (p1 >= PRESSURE_DANGER_BAR || p2 >= PRESSURE_DANGER_BAR) {
+    conditions.push('High Pressure');
+    level = 'danger';
+  } else if (p1 >= PRESSURE_WARNING_BAR || p2 >= PRESSURE_WARNING_BAR) {
+    conditions.push('Pressure Warning');
+    level = 'warning';
+  }
+
+  if (pumpRunning) {
+    if (p1 < PRESSURE_LOW_BAR || p2 < PRESSURE_LOW_BAR) {
+      conditions.push('Low Pressure');
+      level = 'danger';
+    }
+    if (flow === 0) {
+      conditions.push('No Flow');
+      level = 'danger';
+    } else if (flow < FLOW_BLOCKAGE_THRESHOLD_M3H && (p1 >= PRESSURE_WARNING_BAR || p2 >= PRESSURE_WARNING_BAR)) {
+      conditions.push('Possible Blockage');
+      if (level !== 'danger') level = 'warning';
+    }
+  }
+
+  return { level, conditions };
 }
 
 function getChipStyles(tone: StepperChipTone) {
@@ -168,15 +164,6 @@ function getChipStyles(tone: StepperChipTone) {
   if (tone === 'warning') return { container: stationStyles.dashboardValueChipWarning, text: stationStyles.dashboardValueChipTextWarning };
   if (tone === 'danger')  return { container: stationStyles.dashboardValueChipDanger,  text: stationStyles.dashboardValueChipTextDanger  };
   return { container: undefined, text: undefined };
-}
-
-function createDashboardFromPlc(inputs: PumpRoomPlcInputs): PumpRoomDashboardInputs {
-  return {
-    ...DEFAULT_DASHBOARD_INPUTS,
-    pressurePump1:    getLeadingDecimal(inputs.pressurePump1),
-    pressurePump2:    getLeadingDecimal(inputs.pressurePump2),
-    dischargeFlowRate: String(parseFlow(inputs.dischargeFlowRate)),
-  };
 }
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
@@ -360,6 +347,49 @@ function Stepper({ label, value, unit, chipText, chipTone = 'default', onStep, m
   );
 }
 
+function PumpRunningToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <View style={stationStyles.dashboardFieldBlock}>
+      <View style={stationStyles.dashboardToggleRow}>
+        <View>
+          <Text style={stationStyles.fieldLabel}>Pump Running</Text>
+          <Text style={stationStyles.dashboardToggleValue}>{value ? 'Running' : 'Stopped'}</Text>
+        </View>
+        <TouchableOpacity
+          activeOpacity={0.92}
+          onPress={() => onChange(!value)}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: value }}
+          style={[
+            stationStyles.alarmToggle,
+            value ? stationStyles.alarmToggleActive : stationStyles.alarmToggleInactive,
+            value && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' },
+          ]}>
+          <View style={[stationStyles.alarmToggleThumb, value ? stationStyles.alarmToggleThumbActive : stationStyles.alarmToggleThumbInactive]}>
+            <Feather name={value ? 'activity' : 'power'} size={14} color={value ? AppColors.success : AppColors.textSubtle} />
+          </View>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+function DerivedAlarmCard({ alarm }: { alarm: DerivedAlarm }) {
+  const isClear   = alarm.level === 'clear';
+  const isDanger  = alarm.level === 'danger';
+  const bg     = isClear ? AppColors.surfaceSuccess : isDanger ? AppColors.surfaceError : '#FFF9E8';
+  const border = isClear ? '#9BD7B6'               : isDanger ? '#F4B7B7'              : '#F2D17A';
+  const color  = isClear ? AppColors.success        : isDanger ? AppColors.error         : '#A16207';
+  const icon   = isClear ? 'check-circle'           : isDanger ? 'alert-octagon'         : 'alert-triangle';
+  const label  = isClear ? 'System Normal'          : alarm.conditions.join(' · ');
+  return (
+    <View style={[s.derivedAlarmCard, { backgroundColor: bg, borderColor: border }]}>
+      <Feather name={icon as any} size={16} color={color} />
+      <Text style={[s.derivedAlarmText, { color }]}>{label}</Text>
+    </View>
+  );
+}
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function PumpRoom() {
@@ -381,8 +411,9 @@ export default function PumpRoom() {
 
   // ── Inject Value tab state ──
   const [form, setForm] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
-  const [dashboardForm, setDashboardForm] = useState(DEFAULT_DASHBOARD_INPUTS);
+  const [pumpRunning, setPumpRunning] = useState(false);
   const hasHydratedRef = useRef(false);
+  const derivedAlarm = getDerivedAlarm(form, pumpRunning);
 
   // ── PLC: sync metrics → confirmed/draft words ──
   useEffect(() => {
@@ -448,7 +479,6 @@ export default function PumpRoom() {
     getStoredPumpRoomPlcInputs().then((stored) => {
       if (!mounted) return;
       setForm(stored);
-      setDashboardForm(createDashboardFromPlc(stored));
       hasHydratedRef.current = true;
     });
     return () => { mounted = false; };
@@ -464,14 +494,6 @@ export default function PumpRoom() {
 
   const updateFlowStep = (delta: number) =>
     setForm((cur) => ({ ...cur, [FLOW_RATE_FIELD_KEY]: formatFlow(parseFlow(cur[FLOW_RATE_FIELD_KEY]) + delta) }));
-
-  const updateDashboard = <K extends keyof PumpRoomDashboardInputs>(key: K, value: PumpRoomDashboardInputs[K]) =>
-    setDashboardForm((cur) => ({ ...cur, [key]: value }));
-
-  const updateDashboardFlowStep = (delta: number) =>
-    setDashboardForm((cur) => ({ ...cur, dischargeFlowRate: String(clampFlow(parseFlow(cur.dischargeFlowRate) + delta)) }));
-
-  function clampFlow(v: number) { return Math.max(Number.isFinite(v) ? Math.round(v) : 0, FLOW_RATE_MIN_M3H); }
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
@@ -554,144 +576,10 @@ export default function PumpRoom() {
               })}
             </View>
 
-            {/* Dashboard */}
+            {/* Pump status + derived alarm */}
             <View style={stationStyles.summaryCard}>
-              {/* Temp alarm */}
-              <View style={stationStyles.dashboardFieldBlock}>
-                <View style={stationStyles.dashboardToggleRow}>
-                  <View>
-                    <Text style={stationStyles.fieldLabel}>Temp Zone (Alarm)</Text>
-                    <Text style={stationStyles.dashboardToggleValue}>{dashboardForm.temperatureAlarm ? 'Alarm' : 'Normal'}</Text>
-                  </View>
-                  <TouchableOpacity
-                    activeOpacity={0.92}
-                    onPress={() => updateDashboard('temperatureAlarm', !dashboardForm.temperatureAlarm)}
-                    accessibilityRole="switch"
-                    accessibilityState={{ checked: dashboardForm.temperatureAlarm }}
-                    style={[stationStyles.alarmToggle, dashboardForm.temperatureAlarm ? stationStyles.alarmToggleActive : stationStyles.alarmToggleInactive]}>
-                    <View style={[stationStyles.alarmToggleThumb, dashboardForm.temperatureAlarm ? stationStyles.alarmToggleThumbActive : stationStyles.alarmToggleThumbInactive]}>
-                      <Feather name={dashboardForm.temperatureAlarm ? 'alert-triangle' : 'check'} size={14} color={dashboardForm.temperatureAlarm ? AppColors.error : AppColors.success} />
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Current status */}
-              <View style={stationStyles.dashboardFieldBlock}>
-                <Text style={stationStyles.fieldLabel}>Current Status</Text>
-                <View style={stationStyles.statusSegmentRow}>
-                  {DASHBOARD_STATUS_OPTIONS.map((opt) => {
-                    const isActive = opt.value === dashboardForm.currentStatus;
-                    const accent = getStatusAccent(opt.value);
-                    return (
-                      <TouchableOpacity
-                        key={opt.value}
-                        activeOpacity={0.9}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: isActive }}
-                        style={[stationStyles.statusSegmentButton, isActive && stationStyles.statusSegmentButtonActive, isActive && { backgroundColor: accent.fill, borderColor: accent.border }]}
-                        onPress={() => updateDashboard('currentStatus', opt.value)}>
-                        <View style={stationStyles.statusSegmentTopRow}>
-                          <View style={[stationStyles.statusSegmentLamp, { backgroundColor: accent.lamp }, isActive && stationStyles.statusSegmentLampActive]} />
-                          <Text style={stationStyles.statusSegmentCode}>{String(opt.value).padStart(2, '0')}</Text>
-                        </View>
-                        <View style={[stationStyles.statusSegmentCap, isActive && stationStyles.statusSegmentCapActive]}>
-                          <Feather name={opt.icon} size={18} color={isActive ? accent.icon : AppColors.textSubtle} />
-                        </View>
-                        <Text style={[stationStyles.statusSegmentText, isActive && stationStyles.statusSegmentTextActive]}>{opt.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
-              {/* Ampere */}
-              <View style={stationStyles.dashboardFieldBlock}>
-                <View style={stationStyles.dashboardControlCard}>
-                  <Stepper
-                    label="Ampere Status"
-                    value={String(parseAmpere(dashboardForm.ampereStatus))}
-                    unit="A"
-                    chipText={`${parseAmpere(dashboardForm.ampereStatus)} A`}
-                    chipTone={parseAmpere(dashboardForm.ampereStatus) >= 140 ? 'danger' : parseAmpere(dashboardForm.ampereStatus) >= 100 ? 'warning' : 'default'}
-                    onStep={(d) => updateDashboard('ampereStatus', String(clampAmpere(parseAmpere(dashboardForm.ampereStatus) + d * AMPERE_STEP_A)))}
-                    minDisabled={parseAmpere(dashboardForm.ampereStatus) <= AMPERE_MIN_A}
-                    maxDisabled={parseAmpere(dashboardForm.ampereStatus) >= AMPERE_MAX_A}
-                  />
-                </View>
-              </View>
-
-              {/* Pressure 1 */}
-              <View style={stationStyles.dashboardFieldBlock}>
-                <View style={stationStyles.dashboardControlCard}>
-                  {(() => {
-                    const pv = parsePressure(dashboardForm.pressurePump1);
-                    const tone = getPressureTone(pv);
-                    const palette = getSignalPalette(tone);
-                    return (
-                      <>
-                        <View style={stationStyles.dashboardControlHeader}>
-                          <Text style={stationStyles.fieldLabel}>Pressure Pump 1</Text>
-                          <View style={[stationStyles.signalValueChip, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-                            <View style={[stationStyles.signalValueDot, { backgroundColor: palette.accent }]} />
-                            <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{pv.toFixed(1)} bar</Text>
-                          </View>
-                        </View>
-                        <View style={[stationStyles.signalSliderShell, tone === 'normal' && stationStyles.signalSliderShellNormal, tone === 'warning' && stationStyles.signalSliderShellWarning, tone === 'danger' && stationStyles.signalSliderShellDanger]}>
-                          <Slider value={pv} minimumValue={PRESSURE_MIN_BAR} maximumValue={PRESSURE_SLIDER_MAX_BAR} step={0.1} minimumTrackTintColor={palette.accent} maximumTrackTintColor={palette.track} thumbTintColor={palette.accent} onValueChange={(v) => updateDashboard('pressurePump1', formatPressureNum(v))} style={stationStyles.dashboardPressureSlider} />
-                          <EngineeringSignalBands tone={tone} />
-                        </View>
-                      </>
-                    );
-                  })()}
-                </View>
-              </View>
-
-              {/* Pressure 2 */}
-              <View style={stationStyles.dashboardFieldBlock}>
-                <View style={stationStyles.dashboardControlCard}>
-                  {(() => {
-                    const pv = parsePressure(dashboardForm.pressurePump2);
-                    const tone = getPressureTone(pv);
-                    const palette = getSignalPalette(tone);
-                    return (
-                      <>
-                        <View style={stationStyles.dashboardControlHeader}>
-                          <Text style={stationStyles.fieldLabel}>Pressure Pump 2</Text>
-                          <View style={[stationStyles.signalValueChip, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-                            <View style={[stationStyles.signalValueDot, { backgroundColor: palette.accent }]} />
-                            <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{pv.toFixed(1)} bar</Text>
-                          </View>
-                        </View>
-                        <View style={[stationStyles.signalSliderShell, tone === 'normal' && stationStyles.signalSliderShellNormal, tone === 'warning' && stationStyles.signalSliderShellWarning, tone === 'danger' && stationStyles.signalSliderShellDanger]}>
-                          <Slider value={pv} minimumValue={PRESSURE_MIN_BAR} maximumValue={PRESSURE_SLIDER_MAX_BAR} step={0.1} minimumTrackTintColor={palette.accent} maximumTrackTintColor={palette.track} thumbTintColor={palette.accent} onValueChange={(v) => updateDashboard('pressurePump2', formatPressureNum(v))} style={stationStyles.dashboardPressureSlider} />
-                          <EngineeringSignalBands tone={tone} />
-                        </View>
-                      </>
-                    );
-                  })()}
-                </View>
-              </View>
-
-              {/* Flow discharge */}
-              <View style={stationStyles.dashboardFieldBlock}>
-                <View style={stationStyles.dashboardControlCard}>
-                  {(() => {
-                    const fv = parseFlow(dashboardForm.dischargeFlowRate);
-                    return (
-                      <Stepper
-                        label="Flow Discharge"
-                        value={String(fv)}
-                        unit="m3/h"
-                        chipText={`${fv} m3/h`}
-                        chipTone={fv > 0 ? 'stable' : 'default'}
-                        onStep={(d) => updateDashboardFlowStep(d * FLOW_RATE_STEP_M3H)}
-                        minDisabled={fv <= FLOW_RATE_MIN_M3H}
-                      />
-                    );
-                  })()}
-                </View>
-              </View>
+              <PumpRunningToggle value={pumpRunning} onChange={setPumpRunning} />
+              <DerivedAlarmCard alarm={derivedAlarm} />
             </View>
           </>
         )}
@@ -819,6 +707,21 @@ const s = StyleSheet.create({
   },
   doToggleBtnText: { fontSize: 12, fontWeight: '800', color: AppColors.textSubtle, letterSpacing: 0.5 },
   doToggleBtnTextActive: { color: AppColors.textInverse },
+
+  derivedAlarmCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: AppSpacing.sm,
+    borderRadius: AppRadii.lg,
+    borderWidth: 1,
+    paddingHorizontal: AppSpacing.md,
+    paddingVertical: AppSpacing.md,
+  },
+  derivedAlarmText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+  },
 
   bottomSpacer: { height: 96 },
 });

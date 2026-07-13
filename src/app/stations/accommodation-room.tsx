@@ -590,41 +590,64 @@ function AccommodationAlarmSection({
 }) {
   const alarmTone = getAccommodationAlarmTone(alarmStatusCode, sirenOn);
   const alarmPalette = getSignalPalette(alarmTone);
-  const sirenLabel = sirenOn === null ? 'OFF' : sirenOn ? 'ON' : 'OFF';
+  const isAlarmOff = alarmTone === 'normal';
+  const isAlarmOn  = !isAlarmOff;
+  const isSirenOn  = sirenOn === true;
 
   return (
     <View style={styles.sectionCard}>
-      <View style={styles.alarmSummaryRow}>
+      <View style={styles.statusSegmentRow}>
+        {/* Off */}
         <View
           style={[
-            styles.alarmSummaryChip,
-            {
-              backgroundColor: alarmPalette.surface,
-              borderColor: alarmPalette.border,
-            },
+            styles.statusSegmentButton,
+            isAlarmOff && styles.statusSegmentButtonActive,
+            isAlarmOff && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' },
           ]}>
-          <Text style={styles.alarmSummaryLabel}>Alarm</Text>
-          <Text style={[styles.alarmSummaryValue, { color: alarmPalette.text }]}>
-            {alarmStatusLabel}
+          <View style={styles.statusSegmentTopRow}>
+            <View style={[styles.statusSegmentLamp, { backgroundColor: AppColors.success }, isAlarmOff && styles.statusSegmentLampActive]} />
+            <Text style={styles.statusSegmentCode}>00</Text>
+          </View>
+          <View style={[styles.statusSegmentCap, isAlarmOff && styles.statusSegmentCapActive]}>
+            <Feather name="check" size={18} color={isAlarmOff ? AppColors.success : AppColors.textSubtle} />
+          </View>
+          <Text style={[styles.statusSegmentText, isAlarmOff && styles.statusSegmentTextActive]}>Off</Text>
+        </View>
+
+        {/* On */}
+        <View
+          style={[
+            styles.statusSegmentButton,
+            isAlarmOn && styles.statusSegmentButtonActive,
+            isAlarmOn && { backgroundColor: AppColors.surfaceError, borderColor: '#F4B7B7' },
+          ]}>
+          <View style={styles.statusSegmentTopRow}>
+            <View style={[styles.statusSegmentLamp, { backgroundColor: AppColors.error }, isAlarmOn && styles.statusSegmentLampActive]} />
+            <Text style={styles.statusSegmentCode}>01</Text>
+          </View>
+          <View style={[styles.statusSegmentCap, isAlarmOn && styles.statusSegmentCapActive]}>
+            <Feather name="alert-triangle" size={18} color={isAlarmOn ? AppColors.error : AppColors.textSubtle} />
+          </View>
+          <Text style={[styles.statusSegmentText, isAlarmOn && styles.statusSegmentTextActive]}>
+            {isAlarmOn ? alarmStatusLabel : 'On'}
           </Text>
         </View>
 
+        {/* Siren */}
         <View
           style={[
-            styles.alarmSummaryChip,
-            {
-              backgroundColor: sirenOn ? AppColors.surfaceError : AppColors.surfaceSuccess,
-              borderColor: sirenOn ? '#F4B7B7' : '#9BD7B6',
-            },
+            styles.statusSegmentButton,
+            isSirenOn && styles.statusSegmentButtonActive,
+            isSirenOn && { backgroundColor: '#FFF4DB', borderColor: '#F2D17A' },
           ]}>
-          <Text style={styles.alarmSummaryLabel}>Siren</Text>
-          <Text
-            style={[
-              styles.alarmSummaryValue,
-              { color: sirenOn ? AppColors.error : alarmPalette.text },
-            ]}>
-            {sirenLabel}
-          </Text>
+          <View style={styles.statusSegmentTopRow}>
+            <View style={[styles.statusSegmentLamp, { backgroundColor: AppColors.warning }, isSirenOn && styles.statusSegmentLampActive]} />
+            <Text style={styles.statusSegmentCode}>SRN</Text>
+          </View>
+          <View style={[styles.statusSegmentCap, isSirenOn && styles.statusSegmentCapActive]}>
+            <Feather name="volume-2" size={18} color={isSirenOn ? AppColors.warning : AppColors.textSubtle} />
+          </View>
+          <Text style={[styles.statusSegmentText, isSirenOn && styles.statusSegmentTextActive]}>Siren</Text>
         </View>
       </View>
       <View style={styles.alarmOutputList}>
