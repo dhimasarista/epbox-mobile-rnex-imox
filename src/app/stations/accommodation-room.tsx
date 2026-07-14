@@ -834,7 +834,7 @@ export default function AccommodationRoom() {
   const sendSetValueCommand = useCallback(
     async (field: AccommodationEditableKey, nextMetricValue: number, requestedLabel: string) => {
       if (status !== 'connected') {
-        setLastCommandError(`MQTT disconnected \n ${requestedLabel}.`);
+        setLastCommandError(`MQTT disconnected`);
         return;
       }
 
