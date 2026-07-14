@@ -15,7 +15,7 @@ export function getBannerHeight(screenWidth: number, screenHeight: number) {
   const heightScale = screenHeight / BANNER_BASE_HEIGHT;
   const blendedScale = widthScale * 0.7 + heightScale * 0.3;
 
-  return Math.round(BANNER_BASE_SIZE * clamp(blendedScale, 0.82, 1.15));
+  return Math.round(BANNER_BASE_SIZE * clamp(blendedScale, 0.82, 1.8));
 }
 
 export const styles = StyleSheet.create({

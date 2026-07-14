@@ -142,6 +142,7 @@ export default function HomeScreen() {
             <LottieView
               source={require('../../assets/animations/Vessel.json')}
               style={styles.bannerImage}
+              resizeMode="cover"
               autoPlay
               loop
             />
