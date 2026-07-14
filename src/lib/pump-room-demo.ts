@@ -7,19 +7,13 @@ export type PumpRoomPlcInputKey = 'pressurePump1' | 'pressurePump2' | 'discharge
 
 export type PumpRoomPlcInputs = Record<PumpRoomPlcInputKey, string>;
 
-export type PumpRoomDashboardData = {
-  temperatureZone: string;
-  currentStatus: string;
-  ampereStatus: string;
-  pressurePump1: string;
-  pressurePump2: string;
-  dischargeFlowRate: string;
-};
-
+// Defaults in 4–20 mA (raw signal). 4 mA = live zero, 20 mA = full scale.
+// PT-001 / PT-002: 4 mA = 0 bar, 20 mA = 16 bar  →  11.4 mA ≈ 7.4 bar
+// FT-001:          4 mA = 0 m³/h, 20 mA = 300 m³/h → 13.0 mA ≈ 168 m³/h
 export const DEFAULT_PUMP_ROOM_PLC_INPUTS: PumpRoomPlcInputs = {
-  pressurePump1: '7.4 bar',
-  pressurePump2: '7.1 bar',
-  dischargeFlowRate: '168 m3/h',
+  pressurePump1: '11.4 mA',
+  pressurePump2: '11.1 mA',
+  dischargeFlowRate: '13.0 mA',
 };
 
 export const PUMP_ROOM_PLC_FIELDS: {
@@ -29,73 +23,20 @@ export const PUMP_ROOM_PLC_FIELDS: {
 }[] = [
   {
     key: 'pressurePump1',
-    label: 'Pressure Transmitter - Pump 1',
-    placeholder: 'Example: 7.4 bar',
+    label: 'PT-001 — Pressure Pump 1',
+    placeholder: 'Example: 11.4 mA',
   },
   {
     key: 'pressurePump2',
-    label: 'Pressure Transmitter - Pump 2',
-    placeholder: 'Example: 7.1 bar',
+    label: 'PT-002 — Pressure Pump 2',
+    placeholder: 'Example: 11.1 mA',
   },
   {
     key: 'dischargeFlowRate',
-    label: 'Flow Rate Discharge',
-    placeholder: 'Example: 168 m3/h',
+    label: 'FT-001 — Flow Rate Discharge',
+    placeholder: 'Example: 13.0 mA',
   },
 ];
-
-export const PUMP_ROOM_PLC_POINTS = [
-  'Pressure transmitter Pump 1',
-  'Pressure transmitter Pump 2',
-  'Flow rate discharge',
-] as const;
-
-export const PUMP_ROOM_DASHBOARD_POINTS = [
-  'Temperature zone (alarm)',
-  'Current status',
-  'Ampere status',
-  'Pressure pump 1',
-  'Pressure pump 2',
-  'Flow rate discharge',
-] as const;
-
-export const MONITORED_ROOMS = [
-  {
-    id: 'pump-room',
-    title: 'Pump Room',
-    roomId: 'PR-001',
-    deck: 'Lower Deck',
-    status: 'Active',
-    metricLabel: 'Discharge Flow',
-    icon: 'fire-hydrant',
-    active: true,
-    description:
-      'Primary integrated room. Fake PLC values are entered here, then shown again as dashboard outputs.',
-  },
-  {
-    id: 'engine-room',
-    title: 'Engine Room',
-    roomId: 'ER-001',
-    deck: 'Main Deck',
-    status: 'Non-Active',
-    metricLabel: 'N/A',
-    icon: 'fire-truck',
-    active: false,
-    description:
-      'Kept as standby room for now. Not yet connected to PLC fake inputs or dashboard outputs.',
-  },
-] as const;
-
-export function buildPumpRoomDashboard(inputs: PumpRoomPlcInputs): PumpRoomDashboardData {
-  return {
-    temperatureZone: 'Alarm',
-    currentStatus: 'Active',
-    ampereStatus: '76 A',
-    pressurePump1: inputs.pressurePump1,
-    pressurePump2: inputs.pressurePump2,
-    dischargeFlowRate: inputs.dischargeFlowRate,
-  };
-}
 
 export async function getStoredPumpRoomPlcInputs() {
   try {

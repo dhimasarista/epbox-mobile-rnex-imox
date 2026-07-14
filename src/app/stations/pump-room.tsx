@@ -30,7 +30,6 @@ import { getSignalPalette, styles as stationStyles, type SignalTone } from '@/st
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type ActiveTab = 'plc' | 'inject';
-type StepperChipTone = 'default' | 'stable' | 'warning' | 'danger';
 type DerivedAlarmLevel = 'clear' | 'warning' | 'danger';
 type DerivedAlarm = { level: DerivedAlarmLevel; conditions: string[] };
 
@@ -99,71 +98,66 @@ const DO_BIT_MAP: BitChannelMap<DoKey> = {
   lampLocalRemote:  { wordIndex: 1, bitIndex: 7  },
 };
 
-// ─── Inject Value Constants ───────────────────────────────────────────────────
+// ─── Inject Value Constants (4–20 mA signal) ────────────────────────────────
 
-const PRESSURE_MIN_BAR = 0;
-const PRESSURE_LOW_BAR = 2;
-const PRESSURE_WARNING_BAR = 7.5;
-const PRESSURE_DANGER_BAR = 10.2;
-const PRESSURE_SLIDER_MAX_BAR = 16;
+const MA_MIN = 4;
+const MA_MAX = 20;
+const MA_STEP = 0.1;
+
+// PT-001 / PT-002: alarm thresholds in mA
+const PRESSURE_LOW_MA     = 6;     // live-low
+const PRESSURE_WARNING_MA = 11.5;  // caution
+const PRESSURE_DANGER_MA  = 14.2;  // critical
+
+// FT-001: 4 mA = 0 m³/h, 20 mA = 300 m³/h
+const FLOW_MAX_M3H = 300;
 const FLOW_RATE_FIELD_KEY: PumpRoomPlcInputKey = 'dischargeFlowRate';
-const FLOW_RATE_MIN_M3H = 0;
-const FLOW_RATE_STEP_M3H = 1;
-const FLOW_BLOCKAGE_THRESHOLD_M3H = 50;
+const FLOW_BLOCKAGE_THRESHOLD_MA = 4 + (50 / 300) * 16; // ≈ 6.67 mA
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function clampPressure(v: number) { return Math.min(Math.max(Number.isFinite(v) ? v : 0, PRESSURE_MIN_BAR), PRESSURE_SLIDER_MAX_BAR); }
-function parsePressure(v: string)  { return clampPressure(Number.parseFloat(v.replace(',', '.'))); }
-function formatPressure(v: number) { return `${clampPressure(v).toFixed(1)} bar`; }
+function clampMa(v: number) { return Math.min(Math.max(Number.isFinite(v) ? v : MA_MIN, MA_MIN), MA_MAX); }
+function parseMa(v: string)  { return clampMa(Number.parseFloat(v)); }
+function formatMa(v: number) { return `${clampMa(v).toFixed(1)} mA`; }
 
-function clampFlow(v: number)  { return Math.max(Number.isFinite(v) ? Math.round(v) : 0, FLOW_RATE_MIN_M3H); }
-function parseFlow(v: string)  { const m = v.trim().match(/^\d+/); return clampFlow(m ? parseInt(m[0], 10) : NaN); }
-function formatFlow(v: number) { return `${clampFlow(v)} m3/h`; }
+function maToFlowM3h(mA: number) { return (mA - MA_MIN) / (MA_MAX - MA_MIN) * FLOW_MAX_M3H; }
 
-function getPressureTone(v: number): SignalTone {
-  if (v >= PRESSURE_DANGER_BAR) return 'danger';
-  if (v >= PRESSURE_WARNING_BAR) return 'warning';
+function getPressureTone(mA: number): SignalTone {
+  if (mA >= PRESSURE_DANGER_MA)  return 'danger';
+  if (mA >= PRESSURE_WARNING_MA) return 'warning';
   return 'normal';
 }
 
 function getDerivedAlarm(form: PumpRoomPlcInputs, pumpRunning: boolean): DerivedAlarm {
-  const p1 = parsePressure(form.pressurePump1);
-  const p2 = parsePressure(form.pressurePump2);
-  const flow = parseFlow(form.dischargeFlowRate);
+  const p1   = parseMa(form.pressurePump1);
+  const p2   = parseMa(form.pressurePump2);
+  const flow = parseMa(form.dischargeFlowRate);
   const conditions: string[] = [];
   let level: DerivedAlarmLevel = 'clear';
 
-  if (p1 >= PRESSURE_DANGER_BAR || p2 >= PRESSURE_DANGER_BAR) {
+  if (p1 >= PRESSURE_DANGER_MA || p2 >= PRESSURE_DANGER_MA) {
     conditions.push('High Pressure');
     level = 'danger';
-  } else if (p1 >= PRESSURE_WARNING_BAR || p2 >= PRESSURE_WARNING_BAR) {
+  } else if (p1 >= PRESSURE_WARNING_MA || p2 >= PRESSURE_WARNING_MA) {
     conditions.push('Pressure Warning');
     level = 'warning';
   }
 
   if (pumpRunning) {
-    if (p1 < PRESSURE_LOW_BAR || p2 < PRESSURE_LOW_BAR) {
+    if (p1 < PRESSURE_LOW_MA || p2 < PRESSURE_LOW_MA) {
       conditions.push('Low Pressure');
       level = 'danger';
     }
-    if (flow === 0) {
+    if (flow <= MA_MIN) {
       conditions.push('No Flow');
       level = 'danger';
-    } else if (flow < FLOW_BLOCKAGE_THRESHOLD_M3H && (p1 >= PRESSURE_WARNING_BAR || p2 >= PRESSURE_WARNING_BAR)) {
+    } else if (flow < FLOW_BLOCKAGE_THRESHOLD_MA && (p1 >= PRESSURE_WARNING_MA || p2 >= PRESSURE_WARNING_MA)) {
       conditions.push('Possible Blockage');
       if (level !== 'danger') level = 'warning';
     }
   }
 
   return { level, conditions };
-}
-
-function getChipStyles(tone: StepperChipTone) {
-  if (tone === 'stable')  return { container: stationStyles.dashboardValueChipStable,  text: stationStyles.dashboardValueChipTextStable  };
-  if (tone === 'warning') return { container: stationStyles.dashboardValueChipWarning, text: stationStyles.dashboardValueChipTextWarning };
-  if (tone === 'danger')  return { container: stationStyles.dashboardValueChipDanger,  text: stationStyles.dashboardValueChipTextDanger  };
-  return { container: undefined, text: undefined };
 }
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
@@ -279,71 +273,81 @@ function EngineeringSignalBands({ tone }: { tone: SignalTone }) {
 }
 
 function PressureSlider({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  const pv = parsePressure(value);
-  const tone = getPressureTone(pv);
+  const mA   = parseMa(value);
+  const tone = getPressureTone(mA);
   const palette = getSignalPalette(tone);
+  const statusLabel = tone === 'danger'
+    ? `≥ ${PRESSURE_DANGER_MA} mA`
+    : tone === 'warning'
+    ? `≥ ${PRESSURE_WARNING_MA} mA`
+    : 'Normal';
   return (
     <View style={stationStyles.fieldBlock}>
       <View style={stationStyles.fieldHeaderRow}>
         <Text style={stationStyles.fieldLabel}>{label}</Text>
         <View style={[stationStyles.signalValueChip, { backgroundColor: palette.surface, borderColor: palette.border }]}>
           <View style={[stationStyles.signalValueDot, { backgroundColor: palette.accent }]} />
-          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatPressure(pv)}</Text>
+          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatMa(mA)}</Text>
         </View>
       </View>
       <View style={[stationStyles.signalSliderShell, tone === 'normal' && stationStyles.signalSliderShellNormal, tone === 'warning' && stationStyles.signalSliderShellWarning, tone === 'danger' && stationStyles.signalSliderShellDanger]}>
         <Slider
-          value={pv}
-          minimumValue={PRESSURE_MIN_BAR}
-          maximumValue={PRESSURE_SLIDER_MAX_BAR}
-          step={0.1}
+          value={mA}
+          minimumValue={MA_MIN}
+          maximumValue={MA_MAX}
+          step={MA_STEP}
           minimumTrackTintColor={palette.accent}
           maximumTrackTintColor={palette.track}
           thumbTintColor={palette.accent}
-          onValueChange={(v) => onChange(formatPressure(v))}
+          onValueChange={(v) => onChange(formatMa(v))}
           style={stationStyles.pressureSlider}
         />
         <EngineeringSignalBands tone={tone} />
       </View>
       <View style={stationStyles.sliderRangeRow}>
-        <Text style={stationStyles.sliderRangeText}>0 bar</Text>
+        <Text style={stationStyles.sliderRangeText}>4 mA</Text>
         <View style={[stationStyles.signalStateBadge, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <Text style={[stationStyles.signalStateText, { color: palette.text }]}>
-            {tone === 'danger' ? `≥ ${PRESSURE_DANGER_BAR} bar` : tone === 'warning' ? `≥ ${PRESSURE_WARNING_BAR} bar` : 'Normal'}
-          </Text>
+          <Text style={[stationStyles.signalStateText, { color: palette.text }]}>{statusLabel}</Text>
         </View>
-        <Text style={stationStyles.sliderRangeText}>16 bar</Text>
+        <Text style={stationStyles.sliderRangeText}>20 mA</Text>
       </View>
     </View>
   );
 }
 
-function Stepper({ label, value, unit, chipText, chipTone = 'default', onStep, minDisabled, maxDisabled = false }: {
-  label: string; value: string; unit: string; chipText: string; chipTone?: StepperChipTone;
-  onStep: (d: number) => void; minDisabled: boolean; maxDisabled?: boolean;
-}) {
-  const chip = getChipStyles(chipTone);
+function FlowSlider({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const mA  = parseMa(value);
+  const m3h = maToFlowM3h(mA);
   return (
-    <>
-      <View style={stationStyles.dashboardControlHeader}>
+    <View style={stationStyles.fieldBlock}>
+      <View style={stationStyles.fieldHeaderRow}>
         <Text style={stationStyles.fieldLabel}>{label}</Text>
-        <View style={[stationStyles.dashboardValueChip, chip.container]}>
-          <Text style={[stationStyles.dashboardValueChipText, chip.text]}>{chipText}</Text>
+        <View style={[stationStyles.signalValueChip, { backgroundColor: AppColors.surfaceAccent, borderColor: '#F5D3C5' }]}>
+          <View style={[stationStyles.signalValueDot, { backgroundColor: AppColors.primary }]} />
+          <Text style={[stationStyles.signalValueText, { color: AppColors.primary }]}>{formatMa(mA)}</Text>
         </View>
       </View>
-      <View style={stationStyles.dashboardStepperRow}>
-        <TouchableOpacity style={[stationStyles.dashboardStepperButton, minDisabled && stationStyles.stepperButtonDisabled]} onPress={() => onStep(-1)} disabled={minDisabled}>
-          <Feather name="minus" size={18} color={minDisabled ? AppColors.textSubtle : AppColors.text} />
-        </TouchableOpacity>
-        <View style={stationStyles.dashboardReadoutShell}>
-          <Text style={stationStyles.dashboardReadoutValue}>{value}</Text>
-          <Text style={stationStyles.dashboardReadoutUnit}>{unit}</Text>
-        </View>
-        <TouchableOpacity style={[stationStyles.dashboardStepperButton, maxDisabled && stationStyles.stepperButtonDisabled]} onPress={() => onStep(1)} disabled={maxDisabled}>
-          <Feather name="plus" size={18} color={maxDisabled ? AppColors.textSubtle : AppColors.text} />
-        </TouchableOpacity>
+      <View style={stationStyles.signalSliderShell}>
+        <Slider
+          value={mA}
+          minimumValue={MA_MIN}
+          maximumValue={MA_MAX}
+          step={MA_STEP}
+          minimumTrackTintColor={AppColors.primary}
+          maximumTrackTintColor="#F5D3C5"
+          thumbTintColor={AppColors.primary}
+          onValueChange={(v) => onChange(formatMa(v))}
+          style={stationStyles.pressureSlider}
+        />
       </View>
-    </>
+      <View style={stationStyles.sliderRangeRow}>
+        <Text style={stationStyles.sliderRangeText}>4 mA</Text>
+        <View style={[stationStyles.signalStateBadge, { backgroundColor: AppColors.surfaceAccent, borderColor: '#F5D3C5' }]}>
+          <Text style={[stationStyles.signalStateText, { color: AppColors.primary }]}>{m3h.toFixed(0)} m³/h</Text>
+        </View>
+        <Text style={stationStyles.sliderRangeText}>20 mA</Text>
+      </View>
+    </View>
   );
 }
 
@@ -492,9 +496,6 @@ export default function PumpRoom() {
   const updateField = (key: PumpRoomPlcInputKey, value: string) =>
     setForm((cur) => ({ ...cur, [key]: value }));
 
-  const updateFlowStep = (delta: number) =>
-    setForm((cur) => ({ ...cur, [FLOW_RATE_FIELD_KEY]: formatFlow(parseFlow(cur[FLOW_RATE_FIELD_KEY]) + delta) }));
-
   return (
     <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
       <Header />
@@ -544,36 +545,25 @@ export default function PumpRoom() {
           </>
         ) : (
           <>
-            {/* Sensor calibration */}
+            {/* Sensor calibration — all inputs in 4–20 mA */}
             <View style={stationStyles.sectionCard}>
-              {PUMP_ROOM_PLC_FIELDS.map((field) => {
-                if (field.key === FLOW_RATE_FIELD_KEY) {
-                  const fv = parseFlow(form[field.key]);
-                  return (
-                    <View key={field.key} style={stationStyles.fieldBlock}>
-                      <View style={stationStyles.dashboardControlCard}>
-                        <Stepper
-                          label={field.label}
-                          value={String(fv)}
-                          unit="m3/h"
-                          chipText={`${fv} m3/h`}
-                          chipTone={fv > 0 ? 'stable' : 'default'}
-                          onStep={(d) => updateFlowStep(d * FLOW_RATE_STEP_M3H)}
-                          minDisabled={fv <= FLOW_RATE_MIN_M3H}
-                        />
-                      </View>
-                    </View>
-                  );
-                }
-                return (
+              {PUMP_ROOM_PLC_FIELDS.map((field) =>
+                field.key === FLOW_RATE_FIELD_KEY ? (
+                  <FlowSlider
+                    key={field.key}
+                    label={field.label}
+                    value={form[field.key]}
+                    onChange={(v) => updateField(field.key, v)}
+                  />
+                ) : (
                   <PressureSlider
                     key={field.key}
                     label={field.label}
                     value={form[field.key]}
                     onChange={(v) => updateField(field.key, v)}
                   />
-                );
-              })}
+                )
+              )}
             </View>
 
             {/* Pump status + derived alarm */}

@@ -78,25 +78,33 @@ Semua field diinput manual — tidak ada koneksi MQTT. Digunakan untuk simulasi/
 
 ### Sensor Calibration
 
-| Status | No | Tag | Label | Tipe | Signal | Range (EU) | Unit | Threshold W | Threshold D |
-|--------|----|-----|-------|------|--------|-----------|------|-------------|-------------|
-| ⬜ | 1 | PT-001 | Pressure Transmitter — Pump 1 | AI | 4–20 mA | 0–16 | bar | ≥ 7.5 | ≥ 10.2 |
-| ⬜ | 2 | PT-002 | Pressure Transmitter — Pump 2 | AI | 4–20 mA | 0–16 | bar | ≥ 7.5 | ≥ 10.2 |
-| ⬜ | 3 | FT-001 | Flow Rate Discharge | AI | 4–20 mA | ≥ 0 | m³/h | — | — |
+Input UI menggunakan satuan **miliampere (4–20 mA)** — raw signal dari transmitter. App mengonversi mA ke satuan engineering (EU) untuk tampilan dan threshold alarm.
 
-> 4 mA = 0 (live zero), 20 mA = full scale. Scaling dilakukan di PLC, nilai yang dikirim ke app sudah dalam satuan engineering (bar / m³/h).
+| Status | No | Tag | Label | Tipe | Signal | Range mA | EU Max | Unit EU | Threshold W (mA) | Threshold D (mA) |
+|--------|----|-----|-------|------|--------|----------|--------|---------|------------------|------------------|
+| ⬜ | 1 | PT-001 | Pressure Transmitter — Pump 1 | AI | 4–20 mA | 4–20 | 16 | bar | ≥ 11.5 (7.5 bar) | ≥ 14.2 (10.2 bar) |
+| ⬜ | 2 | PT-002 | Pressure Transmitter — Pump 2 | AI | 4–20 mA | 4–20 | 16 | bar | ≥ 11.5 (7.5 bar) | ≥ 14.2 (10.2 bar) |
+| ⬜ | 3 | FT-001 | Flow Rate Discharge | AI | 4–20 mA | 4–20 | 300 | m³/h | — | — |
 
-### Dashboard Display
+**Konversi formula:**
+- Pressure: `bar = (mA − 4) / 16 × 16 = mA − 4`
+- Flow: `m³/h = (mA − 4) / 16 × 300`
+- Low pressure alarm (pump running): `< 6 mA` (< 2 bar)
+- Possible blockage: `flow < 6.67 mA` (< 50 m³/h) AND pressure ≥ 11.5 mA
 
-| Status | No | Tag | Label | Tipe | Signal | Range (EU) | Unit | Threshold W | Threshold D |
-|--------|----|-----|-------|------|--------|-----------|------|-------------|-------------|
-| ⬜ | 1 | TA-001 | Temperature Zone Alarm | DI | Digital | ON/OFF | — | — | ON = Alarm |
-| ⬜ | 2 | SS-001 | Current Status | DI | Digital | 0/1/2 | — | — | 2 = Tripped |
-| ⬜ | 3 | AI-001 | Ampere Status | AI | 4–20 mA | 0–160 | A | ≥ 100 | ≥ 140 |
+### Derived Alarm
 
-> PT-001, PT-002, dan FT-001 ditampilkan ulang di dashboard sebagai display reference — bukan IO baru. Lihat Sensor Calibration di atas.
+Alarm dikalkulasi otomatis dari nilai sensor — tidak ada toggle manual.
+
+| Kondisi | Trigger (mA) | Level |
+|---------|--------------|-------|
+| High Pressure | PT-001 atau PT-002 ≥ 14.2 mA | Danger |
+| Pressure Warning | PT-001 atau PT-002 ≥ 11.5 mA | Warning |
+| Low Pressure | (pump running) PT-001 atau PT-002 < 6 mA | Danger |
+| No Flow | (pump running) FT-001 ≤ 4 mA | Danger |
+| Possible Blockage | (pump running) FT-001 < 6.67 mA AND pressure ≥ 11.5 mA | Warning |
 
 ---
 
 **Ringkasan PLC tab:** 24 dari 24 IO channel terhubung ke MQTT (device 6563). 3 IO potensial belum dipetakan.  
-**Ringkasan Inject Value tab:** 0 dari 6 IO points terhubung MQTT — seluruhnya demo lokal (3 sensor + 3 dashboard-only).
+**Ringkasan Inject Value tab:** 3 sensor AI (4–20 mA input) + Pump Running toggle + Derived Alarm card — seluruhnya lokal demo.
