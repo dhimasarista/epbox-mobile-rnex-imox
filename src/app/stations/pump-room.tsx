@@ -128,7 +128,7 @@ function getPressureTone(mA: number): SignalTone {
   return 'normal';
 }
 
-function getDerivedAlarm(form: PumpRoomPlcInputs, pumpRunning: boolean): DerivedAlarm {
+function getDerivedAlarm(form: PumpRoomPlcInputs): DerivedAlarm {
   const p1   = parseMa(form.pressurePump1);
   const p2   = parseMa(form.pressurePump2);
   const flow = parseMa(form.dischargeFlowRate);
@@ -143,18 +143,17 @@ function getDerivedAlarm(form: PumpRoomPlcInputs, pumpRunning: boolean): Derived
     level = 'warning';
   }
 
-  if (pumpRunning) {
-    if (p1 < PRESSURE_LOW_MA || p2 < PRESSURE_LOW_MA) {
-      conditions.push('Low Pressure');
-      level = 'danger';
-    }
-    if (flow <= MA_MIN) {
-      conditions.push('No Flow');
-      level = 'danger';
-    } else if (flow < FLOW_BLOCKAGE_THRESHOLD_MA && (p1 >= PRESSURE_WARNING_MA || p2 >= PRESSURE_WARNING_MA)) {
-      conditions.push('Possible Blockage');
-      if (level !== 'danger') level = 'warning';
-    }
+  if (p1 < PRESSURE_LOW_MA || p2 < PRESSURE_LOW_MA) {
+    conditions.push('Low Pressure');
+    level = 'danger';
+  }
+
+  if (flow <= MA_MIN) {
+    conditions.push('No Flow');
+    level = 'danger';
+  } else if (flow < FLOW_BLOCKAGE_THRESHOLD_MA && (p1 >= PRESSURE_WARNING_MA || p2 >= PRESSURE_WARNING_MA)) {
+    conditions.push('Possible Blockage');
+    if (level !== 'danger') level = 'warning';
   }
 
   return { level, conditions };
@@ -316,34 +315,36 @@ function PressureSlider({ label, value, onChange }: { label: string; value: stri
 }
 
 function FlowSlider({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  const mA  = parseMa(value);
-  const m3h = maToFlowM3h(mA);
+  const mA      = parseMa(value);
+  const palette = getSignalPalette('normal');
+  const m3h     = maToFlowM3h(mA);
   return (
     <View style={stationStyles.fieldBlock}>
       <View style={stationStyles.fieldHeaderRow}>
         <Text style={stationStyles.fieldLabel}>{label}</Text>
-        <View style={[stationStyles.signalValueChip, { backgroundColor: AppColors.surfaceAccent, borderColor: '#F5D3C5' }]}>
-          <View style={[stationStyles.signalValueDot, { backgroundColor: AppColors.primary }]} />
-          <Text style={[stationStyles.signalValueText, { color: AppColors.primary }]}>{formatMa(mA)}</Text>
+        <View style={[stationStyles.signalValueChip, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+          <View style={[stationStyles.signalValueDot, { backgroundColor: palette.accent }]} />
+          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatMa(mA)}</Text>
         </View>
       </View>
-      <View style={stationStyles.signalSliderShell}>
+      <View style={[stationStyles.signalSliderShell, stationStyles.signalSliderShellNormal]}>
         <Slider
           value={mA}
           minimumValue={MA_MIN}
           maximumValue={MA_MAX}
           step={MA_STEP}
-          minimumTrackTintColor={AppColors.primary}
-          maximumTrackTintColor="#F5D3C5"
-          thumbTintColor={AppColors.primary}
+          minimumTrackTintColor={palette.accent}
+          maximumTrackTintColor={palette.track}
+          thumbTintColor={palette.accent}
           onValueChange={(v) => onChange(formatMa(v))}
           style={stationStyles.pressureSlider}
         />
+        <EngineeringSignalBands tone="normal" />
       </View>
       <View style={stationStyles.sliderRangeRow}>
         <Text style={stationStyles.sliderRangeText}>4 mA</Text>
-        <View style={[stationStyles.signalStateBadge, { backgroundColor: AppColors.surfaceAccent, borderColor: '#F5D3C5' }]}>
-          <Text style={[stationStyles.signalStateText, { color: AppColors.primary }]}>{m3h.toFixed(0)} m³/h</Text>
+        <View style={[stationStyles.signalStateBadge, { backgroundColor: palette.surface, borderColor: palette.border }]}>
+          <Text style={[stationStyles.signalStateText, { color: palette.text }]}>{m3h.toFixed(0)} m³/h</Text>
         </View>
         <Text style={stationStyles.sliderRangeText}>20 mA</Text>
       </View>
@@ -351,32 +352,6 @@ function FlowSlider({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
-function PumpRunningToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <View style={stationStyles.dashboardFieldBlock}>
-      <View style={stationStyles.dashboardToggleRow}>
-        <View>
-          <Text style={stationStyles.fieldLabel}>Pump Running</Text>
-          <Text style={stationStyles.dashboardToggleValue}>{value ? 'Running' : 'Stopped'}</Text>
-        </View>
-        <TouchableOpacity
-          activeOpacity={0.92}
-          onPress={() => onChange(!value)}
-          accessibilityRole="switch"
-          accessibilityState={{ checked: value }}
-          style={[
-            stationStyles.alarmToggle,
-            value ? stationStyles.alarmToggleActive : stationStyles.alarmToggleInactive,
-            value && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' },
-          ]}>
-          <View style={[stationStyles.alarmToggleThumb, value ? stationStyles.alarmToggleThumbActive : stationStyles.alarmToggleThumbInactive]}>
-            <Feather name={value ? 'activity' : 'power'} size={14} color={value ? AppColors.success : AppColors.textSubtle} />
-          </View>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
 
 function DerivedAlarmCard({ alarm }: { alarm: DerivedAlarm }) {
   const isClear   = alarm.level === 'clear';
@@ -415,9 +390,8 @@ export default function PumpRoom() {
 
   // ── Inject Value tab state ──
   const [form, setForm] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
-  const [pumpRunning, setPumpRunning] = useState(false);
   const hasHydratedRef = useRef(false);
-  const derivedAlarm = getDerivedAlarm(form, pumpRunning);
+  const derivedAlarm = getDerivedAlarm(form);
 
   // ── PLC: sync metrics → confirmed/draft words ──
   useEffect(() => {
@@ -566,9 +540,8 @@ export default function PumpRoom() {
               )}
             </View>
 
-            {/* Pump status + derived alarm */}
+            {/* Derived alarm */}
             <View style={stationStyles.summaryCard}>
-              <PumpRunningToggle value={pumpRunning} onChange={setPumpRunning} />
               <DerivedAlarmCard alarm={derivedAlarm} />
             </View>
           </>
