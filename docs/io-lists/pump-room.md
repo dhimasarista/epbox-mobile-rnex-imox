@@ -78,33 +78,53 @@ Semua field diinput manual — tidak ada koneksi MQTT. Digunakan untuk simulasi/
 
 ### Sensor Calibration
 
-Input UI menggunakan satuan **miliampere (4–20 mA)** — raw signal dari transmitter. App mengonversi mA ke satuan engineering (EU) untuk tampilan dan threshold alarm.
-
-| Status | No | Tag | Label | Tipe | Signal | Range mA | EU Max | Unit EU | Threshold W (mA) | Threshold D (mA) |
-|--------|----|-----|-------|------|--------|----------|--------|---------|------------------|------------------|
-| ⬜ | 1 | PT-001 | Pressure Transmitter — Pump 1 | AI | 4–20 mA | 4–20 | 16 | bar | ≥ 11.5 (7.5 bar) | ≥ 14.2 (10.2 bar) |
-| ⬜ | 2 | PT-002 | Pressure Transmitter — Pump 2 | AI | 4–20 mA | 4–20 | 16 | bar | ≥ 11.5 (7.5 bar) | ≥ 14.2 (10.2 bar) |
-| ⬜ | 3 | FT-001 | Flow Rate Discharge | AI | 4–20 mA | 4–20 | 300 | m³/h | — | — |
+| Status | No | Tag | Label | Tipe | Signal | Range mA | EU Max | Unit EU |
+|--------|----|-----|-------|------|--------|----------|--------|---------|
+| ⬜ | 1 | PT-001 | Pressure Transmitter — Pump 1 | AI | 4–20 mA | 4–20 | 16 | bar |
+| ⬜ | 2 | PT-002 | Pressure Transmitter — Pump 2 | AI | 4–20 mA | 4–20 | 16 | bar |
+| ⬜ | 3 | FT-001 | Flow Rate Discharge | AI | 4–20 mA | 4–20 | 300 | m³/h |
 
 **Konversi formula:**
-- Pressure: `bar = (mA − 4) / 16 × 16 = mA − 4`
-- Flow: `m³/h = (mA − 4) / 16 × 300`
-- Low pressure alarm (pump running): `< 6 mA` (< 2 bar)
-- Possible blockage: `flow < 6.67 mA` (< 50 m³/h) AND pressure ≥ 11.5 mA
+- Pressure: `bar = mA − 4` (4 mA = 0 bar, 20 mA = 16 bar)
+- Flow: `m³/h = (mA − 4) / 16 × 300` (4 mA = 0 m³/h, 20 mA = 300 m³/h)
+
+### Unit Convention per Konteks
+
+Setiap sensor memiliki dua representasi satuan tergantung konteks tampilan.
+
+| Tag | Raw Signal | Mobile App — Inject Tab (input chip) | Mobile App — Inject Tab (badge bawah slider) | SCADA / HMI Eksternal |
+|-----|------------|--------------------------------------|----------------------------------------------|-----------------------|
+| PT-001 | 4–20 mA | **mA** | Label status mA: "Normal" / "≥ 11.5 mA" / "≥ 14.2 mA" | **bar** (mA − 4) |
+| PT-002 | 4–20 mA | **mA** | Label status mA: "Normal" / "≥ 11.5 mA" / "≥ 14.2 mA" | **bar** (mA − 4) |
+| FT-001 | 4–20 mA | **mA** | **m³/h** live konversi dari mA | **m³/h** ((mA−4)/16×300) |
+
+> **Aturan sederhana:** Mobile app selalu input dalam mA (raw signal). Satuan engineering (bar / m³/h) ditampilkan sebagai informasi tambahan di badge, dan menjadi satuan utama di SCADA/HMI eksternal.
+
+### Alarm Thresholds
+
+Semua threshold alarm dievaluasi dalam **mA** di mobile app — tidak ada konversi ke EU untuk logika alarm.
+
+| Tag | Threshold | mA | EU Referensi |
+|-----|-----------|-----|--------------|
+| PT-001 / PT-002 | Low Pressure | < 6 mA | < 2 bar |
+| PT-001 / PT-002 | Pressure Warning | ≥ 11.5 mA | ≥ 7.5 bar |
+| PT-001 / PT-002 | High Pressure (Danger) | ≥ 14.2 mA | ≥ 10.2 bar |
+| FT-001 | No Flow | ≤ 4 mA | 0 m³/h (live zero) |
+| FT-001 | Possible Blockage | < 6.67 mA AND PT ≥ 11.5 mA | < 50 m³/h AND pressure warning |
 
 ### Derived Alarm
 
 Alarm dikalkulasi otomatis dari nilai sensor — tidak ada toggle manual.
 
-| Kondisi | Trigger (mA) | Level |
-|---------|--------------|-------|
+| Kondisi | Trigger | Level |
+|---------|---------|-------|
 | High Pressure | PT-001 atau PT-002 ≥ 14.2 mA | Danger |
 | Pressure Warning | PT-001 atau PT-002 ≥ 11.5 mA | Warning |
-| Low Pressure | (pump running) PT-001 atau PT-002 < 6 mA | Danger |
-| No Flow | (pump running) FT-001 ≤ 4 mA | Danger |
-| Possible Blockage | (pump running) FT-001 < 6.67 mA AND pressure ≥ 11.5 mA | Warning |
+| Low Pressure | PT-001 atau PT-002 < 6 mA | Danger |
+| No Flow | FT-001 ≤ 4 mA | Danger |
+| Possible Blockage | FT-001 < 6.67 mA AND (PT-001 atau PT-002 ≥ 11.5 mA) | Warning |
 
 ---
 
 **Ringkasan PLC tab:** 24 dari 24 IO channel terhubung ke MQTT (device 6563). 3 IO potensial belum dipetakan.  
-**Ringkasan Inject Value tab:** 3 sensor AI (4–20 mA input) + Pump Running toggle + Derived Alarm card — seluruhnya lokal demo.
+**Ringkasan Inject Value tab:** 3 sensor AI (input dalam mA) + Derived Alarm card — seluruhnya lokal demo. Tidak ada Pump Running toggle.

@@ -51,7 +51,7 @@ export default function ExploreScreen() {
 
   const getRoomMetricValue = (roomId: (typeof MONITORED_ROOMS)[number]['id']) => {
     if (roomId === 'pump-room') {
-      return pumpInputs.dischargeFlowRate;
+      return pumpInputs.pressurePump1;
     }
 
     if (roomId === 'accommodation-room') {

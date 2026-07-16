@@ -109,10 +109,7 @@ const PRESSURE_LOW_MA     = 6;     // live-low
 const PRESSURE_WARNING_MA = 11.5;  // caution
 const PRESSURE_DANGER_MA  = 14.2;  // critical
 
-// FT-001: 4 mA = 0 m³/h, 20 mA = 300 m³/h
-const FLOW_MAX_M3H = 300;
-const FLOW_RATE_FIELD_KEY: PumpRoomPlcInputKey = 'dischargeFlowRate';
-const FLOW_BLOCKAGE_THRESHOLD_MA = 4 + (50 / 300) * 16; // ≈ 6.67 mA
+const PRESSURE_MAX_BAR = MA_MAX - MA_MIN; // 16 bar full scale
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -120,7 +117,7 @@ function clampMa(v: number) { return Math.min(Math.max(Number.isFinite(v) ? v : 
 function parseMa(v: string)  { return clampMa(Number.parseFloat(v)); }
 function formatMa(v: number) { return `${clampMa(v).toFixed(1)} mA`; }
 
-function maToFlowM3h(mA: number) { return (mA - MA_MIN) / (MA_MAX - MA_MIN) * FLOW_MAX_M3H; }
+function maToPressureBar(mA: number) { return mA - MA_MIN; }
 
 function getPressureTone(mA: number): SignalTone {
   if (mA >= PRESSURE_DANGER_MA)  return 'danger';
@@ -129,9 +126,8 @@ function getPressureTone(mA: number): SignalTone {
 }
 
 function getDerivedAlarm(form: PumpRoomPlcInputs): DerivedAlarm {
-  const p1   = parseMa(form.pressurePump1);
-  const p2   = parseMa(form.pressurePump2);
-  const flow = parseMa(form.dischargeFlowRate);
+  const p1 = parseMa(form.pressurePump1);
+  const p2 = parseMa(form.pressurePump2);
   const conditions: string[] = [];
   let level: DerivedAlarmLevel = 'clear';
 
@@ -146,14 +142,6 @@ function getDerivedAlarm(form: PumpRoomPlcInputs): DerivedAlarm {
   if (p1 < PRESSURE_LOW_MA || p2 < PRESSURE_LOW_MA) {
     conditions.push('Low Pressure');
     level = 'danger';
-  }
-
-  if (flow <= MA_MIN) {
-    conditions.push('No Flow');
-    level = 'danger';
-  } else if (flow < FLOW_BLOCKAGE_THRESHOLD_MA && (p1 >= PRESSURE_WARNING_MA || p2 >= PRESSURE_WARNING_MA)) {
-    conditions.push('Possible Blockage');
-    if (level !== 'danger') level = 'warning';
   }
 
   return { level, conditions };
@@ -271,10 +259,33 @@ function EngineeringSignalBands({ tone }: { tone: SignalTone }) {
   );
 }
 
+function PressureBlockBar({ bar, tone }: { bar: number; tone: SignalTone }) {
+  return (
+    <View style={s.blockBarRow}>
+      {Array.from({ length: PRESSURE_MAX_BAR }, (_, i) => {
+        const segBar = i + 1;
+        const filled = bar >= segBar - 0.5;
+        const segTone: SignalTone =
+          segBar > PRESSURE_DANGER_MA - MA_MIN ? 'danger'
+          : segBar > PRESSURE_WARNING_MA - MA_MIN ? 'warning'
+          : 'normal';
+        const palette = getSignalPalette(segTone);
+        return (
+          <View
+            key={i}
+            style={[s.blockBarSegment, { backgroundColor: filled ? palette.accent : palette.track }]}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
 function PressureSlider({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   const mA   = parseMa(value);
   const tone = getPressureTone(mA);
   const palette = getSignalPalette(tone);
+  const bar  = maToPressureBar(mA);
   const statusLabel = tone === 'danger'
     ? `≥ ${PRESSURE_DANGER_MA} mA`
     : tone === 'warning'
@@ -310,44 +321,11 @@ function PressureSlider({ label, value, onChange }: { label: string; value: stri
         </View>
         <Text style={stationStyles.sliderRangeText}>20 mA</Text>
       </View>
-    </View>
-  );
-}
-
-function FlowSlider({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  const mA      = parseMa(value);
-  const palette = getSignalPalette('normal');
-  const m3h     = maToFlowM3h(mA);
-  return (
-    <View style={stationStyles.fieldBlock}>
-      <View style={stationStyles.fieldHeaderRow}>
-        <Text style={stationStyles.fieldLabel}>{label}</Text>
-        <View style={[stationStyles.signalValueChip, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <View style={[stationStyles.signalValueDot, { backgroundColor: palette.accent }]} />
-          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatMa(mA)}</Text>
-        </View>
+      <View style={s.euDisplayRow}>
+        <Text style={s.euDisplayLabel}>Pressure</Text>
+        <Text style={[s.euDisplayValue, { color: palette.text }]}>{bar.toFixed(1)} bar</Text>
       </View>
-      <View style={[stationStyles.signalSliderShell, stationStyles.signalSliderShellNormal]}>
-        <Slider
-          value={mA}
-          minimumValue={MA_MIN}
-          maximumValue={MA_MAX}
-          step={MA_STEP}
-          minimumTrackTintColor={palette.accent}
-          maximumTrackTintColor={palette.track}
-          thumbTintColor={palette.accent}
-          onValueChange={(v) => onChange(formatMa(v))}
-          style={stationStyles.pressureSlider}
-        />
-        <EngineeringSignalBands tone="normal" />
-      </View>
-      <View style={stationStyles.sliderRangeRow}>
-        <Text style={stationStyles.sliderRangeText}>4 mA</Text>
-        <View style={[stationStyles.signalStateBadge, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <Text style={[stationStyles.signalStateText, { color: palette.text }]}>{m3h.toFixed(0)} m³/h</Text>
-        </View>
-        <Text style={stationStyles.sliderRangeText}>20 mA</Text>
-      </View>
+      <PressureBlockBar bar={bar} tone={tone} />
     </View>
   );
 }
@@ -519,25 +497,16 @@ export default function PumpRoom() {
           </>
         ) : (
           <>
-            {/* Sensor calibration — all inputs in 4–20 mA */}
+            {/* Sensor calibration — PT-001 / PT-002 in 4–20 mA */}
             <View style={stationStyles.sectionCard}>
-              {PUMP_ROOM_PLC_FIELDS.map((field) =>
-                field.key === FLOW_RATE_FIELD_KEY ? (
-                  <FlowSlider
-                    key={field.key}
-                    label={field.label}
-                    value={form[field.key]}
-                    onChange={(v) => updateField(field.key, v)}
-                  />
-                ) : (
-                  <PressureSlider
-                    key={field.key}
-                    label={field.label}
-                    value={form[field.key]}
-                    onChange={(v) => updateField(field.key, v)}
-                  />
-                )
-              )}
+              {PUMP_ROOM_PLC_FIELDS.map((field) => (
+                <PressureSlider
+                  key={field.key}
+                  label={field.label}
+                  value={form[field.key]}
+                  onChange={(v) => updateField(field.key, v)}
+                />
+              ))}
             </View>
 
             {/* Derived alarm */}
@@ -684,6 +653,35 @@ const s = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     fontWeight: '700',
+  },
+
+  euDisplayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: AppSpacing.xs,
+    marginTop: AppSpacing.xs,
+  },
+  euDisplayLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: AppColors.textSubtle,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  euDisplayValue: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  blockBarRow: {
+    flexDirection: 'row',
+    gap: 3,
+    marginTop: AppSpacing.sm,
+  },
+  blockBarSegment: {
+    flex: 1,
+    height: 18,
+    borderRadius: 3,
   },
 
   bottomSpacer: { height: 96 },
