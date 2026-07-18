@@ -14,6 +14,8 @@ import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
   getCarloGavazziMetricsSignalByName,
+  getPumpRoomPressureState,
+  pressureMaToCounter,
 } from '@/lib/mqtt-topics';
 import {
   DEFAULT_PUMP_ROOM_PLC_INPUTS,
@@ -32,6 +34,15 @@ import { getSignalPalette, styles as stationStyles, type SignalTone } from '@/st
 type ActiveTab = 'plc' | 'inject';
 type DerivedAlarmLevel = 'clear' | 'warning' | 'danger';
 type DerivedAlarm = { level: DerivedAlarmLevel; conditions: string[] };
+
+// A pressure SetValue that has been published but not yet echoed back by metrics.
+type PendingPressureCommand = {
+  counterId: number;
+  expectedMa: number;
+  requestedLabel: string;
+  sentAt: number;
+};
+type PendingPressureMap = Partial<Record<PumpRoomPlcInputKey, PendingPressureCommand>>;
 
 // ─── PLC IO Definitions ──────────────────────────────────────────────────────
 
@@ -103,6 +114,12 @@ const DO_BIT_MAP: BitChannelMap<DoKey> = {
 const MA_MIN = 4;
 const MA_MAX = 20;
 const MA_STEP = 0.1;
+
+// Debounce slider drags before publishing so we don't flood the OT channel.
+const COMMAND_DEBOUNCE_MS = 250;
+// Metrics echo mA as a float; treat it as an ack when within half a step.
+const PRESSURE_ACK_TOLERANCE_MA = 0.05;
+const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 
 // PT-001 / PT-002: alarm thresholds in mA
 const PRESSURE_LOW_MA     = 6;     // live-low
@@ -281,11 +298,26 @@ function PressureBlockBar({ bar, tone }: { bar: number; tone: SignalTone }) {
   );
 }
 
-function PressureSlider({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
-  const mA   = parseMa(value);
-  const tone = getPressureTone(mA);
+function PressureSlider({
+  label,
+  draftValue,
+  confirmedValue,
+  isPending,
+  onChange,
+}: {
+  label: string;
+  draftValue: string;
+  confirmedValue: string;
+  isPending: boolean;
+  onChange: (v: string) => void;
+}) {
+  // Slider position follows the local draft; tone/chip/bar follow the gateway
+  // confirmed value — same "confirmed reflects reality" rule as the room screen.
+  const draftMa = parseMa(draftValue);
+  const confirmedMa = parseMa(confirmedValue);
+  const tone = getPressureTone(confirmedMa);
   const palette = getSignalPalette(tone);
-  const bar  = maToPressureBar(mA);
+  const bar  = maToPressureBar(confirmedMa);
   const statusLabel = tone === 'danger'
     ? `≥ ${PRESSURE_DANGER_MA} mA`
     : tone === 'warning'
@@ -296,13 +328,13 @@ function PressureSlider({ label, value, onChange }: { label: string; value: stri
       <View style={stationStyles.fieldHeaderRow}>
         <Text style={stationStyles.fieldLabel}>{label}</Text>
         <View style={[stationStyles.signalValueChip, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <View style={[stationStyles.signalValueDot, { backgroundColor: palette.accent }]} />
-          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatMa(mA)}</Text>
+          <View style={[stationStyles.signalValueDot, { backgroundColor: isPending ? AppColors.warning : palette.accent }]} />
+          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatMa(confirmedMa)}</Text>
         </View>
       </View>
       <View style={[stationStyles.signalSliderShell, tone === 'normal' && stationStyles.signalSliderShellNormal, tone === 'warning' && stationStyles.signalSliderShellWarning, tone === 'danger' && stationStyles.signalSliderShellDanger]}>
         <Slider
-          value={mA}
+          value={draftMa}
           minimumValue={MA_MIN}
           maximumValue={MA_MAX}
           step={MA_STEP}
@@ -353,7 +385,9 @@ export default function PumpRoom() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('plc');
 
   // ── PLC tab state ──
-  const { publishTopic, status } = useMqtt();
+  const { publishTopic, recordLatencySample, status } = useMqtt();
+  const recordLatencySampleRef = useRef(recordLatencySample);
+  recordLatencySampleRef.current = recordLatencySample;
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
   const [confirmedWords, setConfirmedWords] = useState([0, 0]);
@@ -367,9 +401,17 @@ export default function PumpRoom() {
   const doState = unpackChannels(draftWords, DO_BIT_MAP);
 
   // ── Inject Value tab state ──
-  const [form, setForm] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
+  // draft = what the slider shows / user is dragging; confirmed = last value
+  // echoed back by the gateway metrics. Mirrors the accommodation-room mapping.
+  const [injectDraft, setInjectDraft] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
+  const [injectConfirmed, setInjectConfirmed] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
+  const [pendingPressure, setPendingPressure] = useState<PendingPressureMap>({});
+  const pendingPressureRef = useRef(pendingPressure);
+  pendingPressureRef.current = pendingPressure;
+  const pressureDebounceRef = useRef<Partial<Record<PumpRoomPlcInputKey, ReturnType<typeof setTimeout>>>>({});
   const hasHydratedRef = useRef(false);
-  const derivedAlarm = getDerivedAlarm(form);
+  const derivedAlarm = getDerivedAlarm(injectDraft);
+  const isPressurePending = Object.keys(pendingPressure).length > 0;
 
   // ── PLC: sync metrics → confirmed/draft words ──
   useEffect(() => {
@@ -434,19 +476,139 @@ export default function PumpRoom() {
     let mounted = true;
     getStoredPumpRoomPlcInputs().then((stored) => {
       if (!mounted) return;
-      setForm(stored);
+      setInjectDraft(stored);
+      setInjectConfirmed(stored);
       hasHydratedRef.current = true;
     });
-    return () => { mounted = false; };
+    const debounces = pressureDebounceRef.current;
+    return () => {
+      mounted = false;
+      PRESSURE_KEYS.forEach((key) => {
+        const timer = debounces[key];
+        if (timer) clearTimeout(timer);
+      });
+    };
   }, []);
 
   useEffect(() => {
     if (!hasHydratedRef.current) return;
-    void setStoredPumpRoomPlcInputs(form);
-  }, [form]);
+    void setStoredPumpRoomPlcInputs(injectConfirmed);
+  }, [injectConfirmed]);
 
-  const updateField = (key: PumpRoomPlcInputKey, value: string) =>
-    setForm((cur) => ({ ...cur, [key]: value }));
+  // Drop in-flight pressure commands when the broker session drops.
+  useEffect(() => {
+    if (status === 'connected') return;
+    setPendingPressure({});
+  }, [status]);
+
+  const sendPressureCommand = useCallback(
+    async (key: PumpRoomPlcInputKey, nextMa: number, requestedLabel: string) => {
+      if (status !== 'connected') { setLastCommandError('MQTT disconnected.'); return; }
+      const counterId = CARLO_GAVAZZI_GATEWAY_CONFIG.pumpRoom.counterIds[key];
+      try {
+        await publishTopic(
+          'gatewayOtCommand',
+          // Counter register is an unsigned int — encode mA as (mA × 10).
+          buildCarloGavazziOtCommand(counterId, 'SetValue', pressureMaToCounter(nextMa)),
+          { qos: 0, retain: false }
+        );
+        setPendingPressure((cur) => ({
+          ...cur,
+          [key]: { counterId, expectedMa: nextMa, requestedLabel, sentAt: Date.now() },
+        }));
+        setLastCommandError(null);
+      } catch (err) {
+        setLastCommandError(err instanceof Error ? err.message : `Unable to send ${requestedLabel}.`);
+      }
+    },
+    [publishTopic, status]
+  );
+
+  // ── Inject Value: reconcile pressure counters against metrics echo ──
+  useEffect(() => {
+    if (!metricsTopic.payload) return;
+    const pressureState = getPumpRoomPressureState(metricsTopic.payload);
+    const metricByKey: Record<PumpRoomPlcInputKey, number | null> = {
+      pressurePump1: pressureState.pressurePump1Ma,
+      pressurePump2: pressureState.pressurePump2Ma,
+    };
+    const latestPending = pendingPressureRef.current;
+    const timer = setTimeout(() => {
+      // Confirmed value always tracks the gateway echo.
+      setInjectConfirmed((cur) => {
+        const next = { ...cur };
+        PRESSURE_KEYS.forEach((key) => {
+          const ma = metricByKey[key];
+          if (ma !== null) next[key] = formatMa(ma);
+        });
+        return next;
+      });
+
+      const ackedKeys = PRESSURE_KEYS.filter((key) => {
+        const ma = metricByKey[key];
+        const pending = latestPending[key];
+        return ma !== null && pending && Math.abs(pending.expectedMa - ma) <= PRESSURE_ACK_TOLERANCE_MA;
+      });
+
+      // Draft follows the echo except while a command is still awaiting its ack.
+      setInjectDraft((cur) => {
+        const next = { ...cur };
+        PRESSURE_KEYS.forEach((key) => {
+          const ma = metricByKey[key];
+          if (ma === null) return;
+          if (!latestPending[key] || ackedKeys.includes(key)) {
+            next[key] = formatMa(ma);
+          }
+        });
+        return next;
+      });
+
+      if (ackedKeys.length > 0) {
+        const latestAcked = ackedKeys
+          .map((key) => latestPending[key]!)
+          .sort((left, right) => left.sentAt - right.sentAt)
+          .pop();
+        if (latestAcked) {
+          recordLatencySampleRef.current({
+            label: latestAcked.requestedLabel,
+            requestTopicKey: 'gatewayOtCommand',
+            responseTopicKey: 'gatewayMetrics',
+            startedAt: latestAcked.sentAt,
+            completedAt: metricsReceivedAt ?? Date.now(),
+          });
+        }
+        setPendingPressure((cur) => {
+          const next = { ...cur };
+          ackedKeys.forEach((key) => { delete next[key]; });
+          return next;
+        });
+        setLastCommandError(null);
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [metricsReceivedAt, metricsTopic.payload]);
+
+  const updatePressureField = useCallback(
+    (key: PumpRoomPlcInputKey, value: string) => {
+      const nextMa = parseMa(value);
+      setInjectDraft((cur) => ({ ...cur, [key]: formatMa(nextMa) }));
+
+      const existing = pressureDebounceRef.current[key];
+      if (existing) clearTimeout(existing);
+      const label = key === 'pressurePump1' ? 'PT-001' : 'PT-002';
+      pressureDebounceRef.current[key] = setTimeout(() => {
+        void sendPressureCommand(key, nextMa, `${label} ${formatMa(nextMa)}`);
+      }, COMMAND_DEBOUNCE_MS);
+    },
+    [sendPressureCommand]
+  );
+
+  const injectStatusHint = useMemo(() => {
+    if (lastCommandError) return lastCommandError;
+    if (isPressurePending) return 'Injecting pressure — waiting for gateway echo…';
+    if (status !== 'connected') return 'MQTT disconnected.';
+    return null;
+  }, [isPressurePending, lastCommandError, status]);
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
@@ -497,14 +659,18 @@ export default function PumpRoom() {
           </>
         ) : (
           <>
+            {injectStatusHint ? <Text style={s.statusHint}>{injectStatusHint}</Text> : null}
+
             {/* Sensor calibration — PT-001 / PT-002 in 4–20 mA */}
             <View style={stationStyles.sectionCard}>
               {PUMP_ROOM_PLC_FIELDS.map((field) => (
                 <PressureSlider
                   key={field.key}
                   label={field.label}
-                  value={form[field.key]}
-                  onChange={(v) => updateField(field.key, v)}
+                  draftValue={injectDraft[field.key]}
+                  confirmedValue={injectConfirmed[field.key]}
+                  isPending={pendingPressure[field.key] !== undefined}
+                  onChange={(v) => updatePressureField(field.key, v)}
                 />
               ))}
             </View>

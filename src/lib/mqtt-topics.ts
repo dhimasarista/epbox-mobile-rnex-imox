@@ -162,12 +162,21 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
     },
   },
   fireFightingRoom: {
-    // Device 6563 covers both DI and DO under one device entry in
-    // gatewayMetrics. It exposes (at least) two signals — one for the DI
+    // Device 6563 (PLC - SIEMENS) covers both DI and DO under one device entry
+    // in gatewayMetrics. It exposes (at least) two signals — one for the DI
     // word and one for the DO word. Signal index/name TBD by engineering.
     // The same id (6563) is used as the OT command target for SetValue.
     doWord: {
       deviceId: 6563,
+    },
+  },
+  pumpRoom: {
+    // Pressure Transmitter counters (Carlo Gavazzi "Counter" functions).
+    // Injected in the 4–20 mA signal domain via SetValue on cmd/ot and echoed
+    // back on gatewayMetrics — same mapping rules as the accommodation room.
+    counterIds: {
+      pressurePump1: 6983, // Pressure Transmitter - Pump 1 (PT-001)
+      pressurePump2: 7019, // Pressure Transmitter - Pump 2 (PT-002)
     },
   },
 } as const;
@@ -515,6 +524,32 @@ export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPay
       temperatureNumber === null
         ? null
         : formatAccommodationTemperature(Math.round(temperatureNumber)),
+  };
+}
+
+// The pressure counter register is a Modbus unsigned integer, so a fractional
+// mA cannot be stored directly. Encode mA as (mA × 10) on write and divide it
+// back out on read — keeping the 0.1 mA slider resolution. Both directions live
+// here so callers never round-trip mA through the raw counter by hand.
+export const PRESSURE_MA_COUNTER_SCALE = 10;
+
+export function pressureMaToCounter(mA: number) {
+  return Math.round(mA * PRESSURE_MA_COUNTER_SCALE);
+}
+
+export function pressureCounterToMa(counter: number) {
+  return counter / PRESSURE_MA_COUNTER_SCALE;
+}
+
+export function getPumpRoomPressureState(payload: CarloGavazziMetricsPayload) {
+  const { pressurePump1, pressurePump2 } = CARLO_GAVAZZI_GATEWAY_CONFIG.pumpRoom.counterIds;
+  const pump1Counter = getCarloGavazziCounterNumericValue(payload, pressurePump1);
+  const pump2Counter = getCarloGavazziCounterNumericValue(payload, pressurePump2);
+
+  return {
+    // Counter echo decoded back into the injected mA signal domain.
+    pressurePump1Ma: pump1Counter === null ? null : pressureCounterToMa(pump1Counter),
+    pressurePump2Ma: pump2Counter === null ? null : pressureCounterToMa(pump2Counter),
   };
 }
 
