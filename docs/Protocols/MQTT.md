@@ -141,6 +141,13 @@ publish/echo reconciliation rules.
 value is echoed back on `metrics`. The confirmed value (chip / tone / bar)
 always tracks the gateway echo.
 
+**PLC DO word encoding.** The Pump Room PLC tab shows **Digital Output only**
+(Digital Input is not surfaced). The DO state is a single 16-bit word, re-based to
+**bit 0** (channel 1 → bit 0 … up to bit 13; bits 14–15 spare). A toggle sets its
+bit and publishes `SetValue` with that word verbatim (no DI area packed in). The
+bit-to-signal map lives in `DO_BIT_MAP` (`stations/pump-room.tsx`), sourced from
+`docs/DO.md`; full layout in `docs/Protocols/Dashboard-SCADA.md` §5.
+
 **Pressure transmitter encoding.** The pressure counter register is a Modbus
 **unsigned integer**, so a fractional mA cannot be written directly. The app
 encodes it as **`mA × 10`** on write (`SetValue` = `114` for `11.4 mA`) and

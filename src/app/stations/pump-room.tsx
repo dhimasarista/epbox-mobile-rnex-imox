@@ -44,70 +44,52 @@ type PendingPressureCommand = {
 };
 type PendingPressureMap = Partial<Record<PumpRoomPlcInputKey, PendingPressureCommand>>;
 
-// ─── PLC IO Definitions ──────────────────────────────────────────────────────
-
-const DI_CHANNELS = [
-  { key: 'emergencyStop',        label: 'Emergency Stop',          channel: 1,  slot: 1, contactType: 'NC' },
-  { key: 'btnStartPumpA',        label: 'Button - Start Pump A',   channel: 2,  slot: 1, contactType: 'NO' },
-  { key: 'btnStopPumpA',         label: 'Button - Stop Pump A',    channel: 3,  slot: 1, contactType: 'NC' },
-  { key: 'btnStartPumpB',        label: 'Button - Start Pump B',   channel: 4,  slot: 1, contactType: 'NO' },
-  { key: 'btnStopPumpB',         label: 'Button - Stop Pump B',    channel: 5,  slot: 1, contactType: 'NC' },
-  { key: 'btnZoneRelease',       label: 'Button - Zone Release',   channel: 6,  slot: 1, contactType: 'NO' },
-  { key: 'selectorLocalRemote',  label: 'Selector Local / Remote', channel: 7,  slot: 1, contactType: 'NO' },
-  { key: 'r3PumpARunning',       label: 'R3 – Pump A Status',      channel: 8,  slot: 1, contactType: 'NO' },
-  { key: 'r4PumpBRunning',       label: 'R4 – Pump B Status',      channel: 9,  slot: 1, contactType: 'NO' },
-  { key: 'r5PumpCRunning',       label: 'R5 – Pump C Status',      channel: 10, slot: 1, contactType: 'NO' },
-  { key: 'levelSwitchLow',       label: 'Level Switch – Low Tank', channel: 11, slot: 1, contactType: 'NO' },
-  { key: 'flowSwitch',           label: 'Flow Switch',             channel: 12, slot: 1, contactType: 'NO' },
-] as const;
+// ─── PLC Digital Output Definitions ──────────────────────────────────────────
+// Digital Output only — Digital Input is not surfaced on this screen. The DO
+// word is a dedicated 16-bit register (bit 0 = LSB). Per docs/DO.md: bits 0..13
+// carry the functional outputs, bits 14..15 are spare. The published SetValue
+// is that single word, no DI area packed in.
 
 const DO_CHANNELS = [
-  { key: 'solenoidValve1',   label: 'R1 – Solenoid Valve 1 Open', channel: 1,  slot: 1 },
-  { key: 'solenoidValve2',   label: 'R2 – Solenoid Valve 2 Open', channel: 2,  slot: 1 },
-  { key: 'r3PumpAStart',     label: 'R3 – Pump A Start',          channel: 3,  slot: 1 },
-  { key: 'r4PumpBStart',     label: 'R4 – Pump B Start',          channel: 4,  slot: 1 },
-  { key: 'r5PumpCStart',     label: 'R5 – Pump C Start',          channel: 5,  slot: 1 },
-  { key: 'buzzer',           label: 'Buzzer',                      channel: 6,  slot: 1 },
-  { key: 'lampZoneRelease',  label: 'Lamp – Zone Release',         channel: 7,  slot: 1 },
-  { key: 'lampPumpARunning', label: 'Lamp – Pump A Running',       channel: 8,  slot: 1 },
-  { key: 'lampPumpAStoped',  label: 'Lamp – Pump A Stopped',       channel: 9,  slot: 1 },
-  { key: 'lampPumpBRunning', label: 'Lamp – Pump B Running',       channel: 10, slot: 1 },
-  { key: 'lampPumpBStoped',  label: 'Lamp – Pump B Stopped',       channel: 1,  slot: 2 },
-  { key: 'lampLocalRemote',  label: 'Lamp – Local / Remote',       channel: 2,  slot: 2 },
+  { key: 'pumpARunning',         label: 'Pump A Running' },
+  { key: 'pumpBRunning',         label: 'Pump B Running' },
+  { key: 'sv1Opened',            label: 'SV1 Opened' },
+  { key: 'sv1Closed',            label: 'SV1 Closed' },
+  { key: 'sv2Opened',            label: 'SV2 Opened' },
+  { key: 'sv2Closed',            label: 'SV2 Closed' },
+  { key: 'localZoneActivation',  label: 'Local Zone Activation' },
+  { key: 'remoteZoneActivation', label: 'Remote Zone Activation' },
+  { key: 'fgsConfFire',          label: 'FGS Confirmed Fire' },
+  { key: 'levelTankHigh',        label: 'Level Tank High' },
+  { key: 'levelTankLow',         label: 'Level Tank Low' },
+  { key: 'pumpCRunning',         label: 'Pump C Running' },
+  { key: 'localMode',            label: 'Local Mode' },
+  { key: 'remoteMode',           label: 'Remote Mode' },
 ] as const;
 
-type DiKey = (typeof DI_CHANNELS)[number]['key'];
 type DoKey = (typeof DO_CHANNELS)[number]['key'];
 
-const DI_BIT_MAP: BitChannelMap<DiKey> = {
-  emergencyStop:       { wordIndex: 0, bitIndex: 0  },
-  btnStartPumpA:       { wordIndex: 0, bitIndex: 1  },
-  btnStopPumpA:        { wordIndex: 0, bitIndex: 2  },
-  btnStartPumpB:       { wordIndex: 0, bitIndex: 3  },
-  btnStopPumpB:        { wordIndex: 0, bitIndex: 4  },
-  btnZoneRelease:      { wordIndex: 0, bitIndex: 5  },
-  selectorLocalRemote: { wordIndex: 0, bitIndex: 6  },
-  r3PumpARunning:      { wordIndex: 0, bitIndex: 7  },
-  r4PumpBRunning:      { wordIndex: 0, bitIndex: 8  },
-  r5PumpCRunning:      { wordIndex: 0, bitIndex: 9  },
-  levelSwitchLow:      { wordIndex: 0, bitIndex: 10 },
-  flowSwitch:          { wordIndex: 0, bitIndex: 11 },
+// Re-based to bit 0: DO occupies its own word, one bit per channel in order.
+// Bits 14 & 15 are spare (not rendered, kept 0).
+const DO_BIT_MAP: BitChannelMap<DoKey> = {
+  pumpARunning:         { wordIndex: 0, bitIndex: 0  },
+  pumpBRunning:         { wordIndex: 0, bitIndex: 1  },
+  sv1Opened:            { wordIndex: 0, bitIndex: 2  },
+  sv1Closed:            { wordIndex: 0, bitIndex: 3  },
+  sv2Opened:            { wordIndex: 0, bitIndex: 4  },
+  sv2Closed:            { wordIndex: 0, bitIndex: 5  },
+  localZoneActivation:  { wordIndex: 0, bitIndex: 6  },
+  remoteZoneActivation: { wordIndex: 0, bitIndex: 7  },
+  fgsConfFire:          { wordIndex: 0, bitIndex: 8  },
+  levelTankHigh:        { wordIndex: 0, bitIndex: 9  },
+  levelTankLow:         { wordIndex: 0, bitIndex: 10 },
+  pumpCRunning:         { wordIndex: 0, bitIndex: 11 },
+  localMode:            { wordIndex: 0, bitIndex: 12 },
+  remoteMode:           { wordIndex: 0, bitIndex: 13 },
 };
 
-const DO_BIT_MAP: BitChannelMap<DoKey> = {
-  solenoidValve1:   { wordIndex: 0, bitIndex: 12 },
-  solenoidValve2:   { wordIndex: 0, bitIndex: 13 },
-  r3PumpAStart:     { wordIndex: 0, bitIndex: 14 },
-  r4PumpBStart:     { wordIndex: 0, bitIndex: 15 },
-  r5PumpCStart:     { wordIndex: 1, bitIndex: 0  },
-  buzzer:           { wordIndex: 1, bitIndex: 1  },
-  lampZoneRelease:  { wordIndex: 1, bitIndex: 2  },
-  lampPumpARunning: { wordIndex: 1, bitIndex: 3  },
-  lampPumpAStoped:  { wordIndex: 1, bitIndex: 4  },
-  lampPumpBRunning: { wordIndex: 1, bitIndex: 5  },
-  lampPumpBStoped:  { wordIndex: 1, bitIndex: 6  },
-  lampLocalRemote:  { wordIndex: 1, bitIndex: 7  },
-};
+// Full 16-bit DO word (bits 14 & 15 spare).
+const DO_WORD_MASK = 0xffff;
 
 // ─── Inject Value Constants (4–20 mA signal) ────────────────────────────────
 
@@ -202,49 +184,26 @@ function TabBar({ active, onChange }: { active: ActiveTab; onChange: (t: ActiveT
 
 // ─── PLC Tab sub-components ───────────────────────────────────────────────────
 
-function GatewayWordDisplay({ lastCombinedWord }: { lastCombinedWord: number }) {
-  const diBits = (lastCombinedWord & 0x0fff).toString(2).padStart(12, '0');
-  const doBits = ((lastCombinedWord >>> 12) & 0x0fff).toString(2).padStart(12, '0');
+function GatewayWordDisplay({ doWord }: { doWord: number }) {
+  const doBits = (doWord & DO_WORD_MASK).toString(2).padStart(16, '0');
   return (
     <View style={s.ioCountRow}>
       <View style={s.ioCountCard}>
-        <Text style={s.ioCountValue}>{lastCombinedWord}</Text>
-        <Text style={s.ioCountLabel}>Adjustable Value</Text>
+        <Text style={s.ioCountValue}>{doWord}</Text>
+        <Text style={s.ioCountLabel}>DO Word (SetValue)</Text>
       </View>
       <View style={s.ioCountCard}>
-        <Text style={[s.ioCountValue, s.ioCountValueBin]}>{diBits} {doBits}</Text>
-        <Text style={s.ioCountLabel}>DI · DO</Text>
-      </View>
-    </View>
-  );
-}
-
-function DiStatusRow({ ch, value }: { ch: (typeof DI_CHANNELS)[number]; value: boolean }) {
-  const isEmergency = ch.key === 'emergencyStop';
-  const dotColor = isEmergency && value ? AppColors.error : value ? AppColors.success : AppColors.border;
-  const valueColor = isEmergency && value ? AppColors.error : value ? AppColors.success : AppColors.textSubtle;
-  return (
-    <View style={s.diRow}>
-      <View style={s.diLeft}>
-        <View style={[s.diDot, { backgroundColor: dotColor }]} />
-        <View style={s.diTextBlock}>
-          <Text style={s.diLabel} numberOfLines={1}>{ch.label}</Text>
-          <Text style={s.diMeta}>Ch {ch.channel} · Slot {ch.slot} · {ch.contactType}</Text>
-        </View>
-      </View>
-      <View style={[s.diValueChip, value && (isEmergency ? s.diChipDanger : s.diChipActive)]}>
-        <Text style={[s.diValueText, { color: valueColor }]}>{value ? 'TRUE' : 'FALSE'}</Text>
+        <Text style={[s.ioCountValue, s.ioCountValueBin]}>{doBits}</Text>
+        <Text style={s.ioCountLabel}>DO bits (b15…b0)</Text>
       </View>
     </View>
   );
 }
 
 function DoControlRow({ ch, value, onToggle }: { ch: (typeof DO_CHANNELS)[number]; value: boolean; onToggle: () => void }) {
-  const isBuzzer = ch.key === 'buzzer';
-  const isLamp   = ch.key.startsWith('lamp');
-  const activeColor     = isBuzzer ? AppColors.warning  : isLamp ? AppColors.primary : AppColors.success;
-  const activeBgColor   = isBuzzer ? '#FFF4DB'          : isLamp ? AppColors.surfaceAccent : AppColors.surfaceSuccess;
-  const activeBorderColor = isBuzzer ? '#F2D17A'        : isLamp ? '#F5D3C5' : '#9BD7B6';
+  const activeColor       = AppColors.success;
+  const activeBgColor     = AppColors.surfaceSuccess;
+  const activeBorderColor = '#9BD7B6';
   return (
     <View style={[s.doRow, value && { backgroundColor: activeBgColor, borderColor: activeBorderColor }]}>
       <View style={s.doLeft}>
@@ -390,15 +349,15 @@ export default function PumpRoom() {
   recordLatencySampleRef.current = recordLatencySample;
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
-  const [confirmedWords, setConfirmedWords] = useState([0, 0]);
-  const [draftWords, setDraftWords] = useState([0, 0]);
-  const [lastCombinedWord, setLastCombinedWord] = useState(0);
+  const [draftDoWord, setDraftDoWord] = useState(0);
+  const [lastDoWord, setLastDoWord] = useState(0);
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
   const [isPendingDo, setIsPendingDo] = useState(false);
+  const isPendingDoRef = useRef(isPendingDo);
+  isPendingDoRef.current = isPendingDo;
   const doExpireTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const doBaselineReceivedAtRef = useRef<number | null>(null);
-  const diState = unpackChannels(confirmedWords, DI_BIT_MAP);
-  const doState = unpackChannels(draftWords, DO_BIT_MAP);
+  const doState = unpackChannels([draftDoWord], DO_BIT_MAP);
 
   // ── Inject Value tab state ──
   // draft = what the slider shows / user is dragging; confirmed = last value
@@ -413,7 +372,7 @@ export default function PumpRoom() {
   const derivedAlarm = getDerivedAlarm(injectDraft);
   const isPressurePending = Object.keys(pendingPressure).length > 0;
 
-  // ── PLC: sync metrics → confirmed/draft words ──
+  // ── PLC: sync metrics → DO word ──
   useEffect(() => {
     if (!metricsTopic.payload) return;
     const sig = getCarloGavazziMetricsSignalByName(
@@ -423,12 +382,11 @@ export default function PumpRoom() {
     );
     if (!sig || typeof sig.value !== 'number') return;
     const timer = setTimeout(() => {
-      const rounded = Math.round(sig.value as number);
-      const word0 = rounded & 0xffff;
-      const word1 = (rounded >>> 16) & 0xffff;
-      setConfirmedWords([word0, word1]);
-      setDraftWords((cur) => [(cur[0] & 0xf000) | (word0 & 0x0fff), cur[1]]);
-      setLastCombinedWord(rounded);
+      const doWord = Math.round(sig.value as number) & DO_WORD_MASK;
+      setLastDoWord(doWord);
+      // Draft is optimistic while a toggle is in flight; otherwise it tracks the
+      // gateway echo so externally-driven output changes stay reflected.
+      if (!isPendingDoRef.current) setDraftDoWord(doWord);
     }, 0);
     return () => clearTimeout(timer);
   }, [metricsReceivedAt, metricsTopic.payload]);
@@ -443,10 +401,9 @@ export default function PumpRoom() {
   }, [isPendingDo, metricsReceivedAt]);
 
   const toggleDo = useCallback((key: DoKey) => {
-    const newWords = setChannelBit(draftWords, DO_BIT_MAP, key, !doState[key]);
-    setDraftWords(newWords);
+    const nextWord = setChannelBit([draftDoWord], DO_BIT_MAP, key, !doState[key])[0] & DO_WORD_MASK;
+    setDraftDoWord(nextWord);
     if (status !== 'connected') { setLastCommandError('MQTT disconnected.'); return; }
-    const combinedValue = newWords[1] * 65536 + newWords[0];
     doBaselineReceivedAtRef.current = metricsReceivedAt;
     setIsPendingDo(true);
     if (doExpireTimeoutRef.current !== null) clearTimeout(doExpireTimeoutRef.current);
@@ -458,11 +415,12 @@ export default function PumpRoom() {
     }, 5_000);
     void publishTopic(
       'gatewayOtCommand',
-      buildCarloGavazziOtCommand(CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.doWord.deviceId, 'SetValue', combinedValue),
+      // DO word only (0..4095) — re-based to bit 0, no DI area packed in.
+      buildCarloGavazziOtCommand(CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.doWord.deviceId, 'SetValue', nextWord),
       { qos: 0, retain: false }
-    ).then(() => { setLastCombinedWord(combinedValue); setLastCommandError(null); })
+    ).then(() => { setLastDoWord(nextWord); setLastCommandError(null); })
      .catch((err: unknown) => { setLastCommandError(err instanceof Error ? err.message : 'SetValue failed.'); });
-  }, [draftWords, doState, metricsReceivedAt, publishTopic, status]);
+  }, [draftDoWord, doState, metricsReceivedAt, publishTopic, status]);
 
   const statusHint = useMemo(() => {
     if (lastCommandError) return lastCommandError;
@@ -619,27 +577,9 @@ export default function PumpRoom() {
 
         {activeTab === 'plc' ? (
           <>
-            <GatewayWordDisplay lastCombinedWord={lastCombinedWord} />
+            <GatewayWordDisplay doWord={lastDoWord} />
 
             {statusHint ? <Text style={s.statusHint}>{statusHint}</Text> : null}
-
-            {/* DI */}
-            <View style={s.sectionBlock}>
-              <View style={s.sectionHeader}>
-                <View style={s.sectionLabelRow}>
-                  <View style={[s.sectionDot, { backgroundColor: AppColors.info }]} />
-                  <Text style={s.sectionTitle}>Digital Input</Text>
-                </View>
-                <Text style={s.sectionBadge}>Read Only</Text>
-              </View>
-              <View style={s.ioCard}>
-                {DI_CHANNELS.map((ch, i) => (
-                  <View key={ch.key} style={[s.diRowWrap, i < DI_CHANNELS.length - 1 && s.rowDivider]}>
-                    <DiStatusRow ch={ch} value={diState[ch.key]} />
-                  </View>
-                ))}
-              </View>
-            </View>
 
             {/* DO */}
             <View style={s.sectionBlock}>
@@ -765,29 +705,7 @@ const s = StyleSheet.create({
   },
   sectionBadgeDo: { color: AppColors.primary, backgroundColor: AppColors.surfaceAccent, borderColor: '#F5D3C5' },
 
-  ioCard: {
-    backgroundColor: AppColors.surface,
-    borderRadius: AppRadii.xl,
-    borderWidth: 1,
-    borderColor: AppColors.border,
-    overflow: 'hidden',
-  },
-  diRowWrap: { paddingHorizontal: AppSpacing.md, paddingVertical: 12 },
-  rowDivider: { borderBottomWidth: 1, borderBottomColor: AppColors.border },
-  diRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: AppSpacing.sm },
-  diLeft: { flexDirection: 'row', alignItems: 'center', gap: AppSpacing.sm, flex: 1, minWidth: 0 },
-  diDot: { width: 10, height: 10, borderRadius: AppRadii.full, flexShrink: 0 },
-  diTextBlock: { flex: 1, minWidth: 0 },
   diLabel: { fontSize: 13, fontWeight: '700', color: AppColors.text },
-  diMeta: { fontSize: 11, fontWeight: '600', color: AppColors.textSubtle, marginTop: 1 },
-  diValueChip: {
-    paddingHorizontal: 10, paddingVertical: 4, borderRadius: AppRadii.full,
-    backgroundColor: AppColors.surfaceMuted, borderWidth: 1, borderColor: AppColors.border,
-    minWidth: 56, alignItems: 'center',
-  },
-  diChipActive: { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' },
-  diChipDanger: { backgroundColor: AppColors.surfaceError, borderColor: '#F4B7B7' },
-  diValueText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
 
   doStack: { gap: AppSpacing.sm },
   doRow: {

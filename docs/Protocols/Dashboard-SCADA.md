@@ -87,7 +87,7 @@ type in [`MQTT.md`](./MQTT.md).
 | Temperature | Counter | 3585 | `accommodationRoom.counterIds.temperature` | `accommodation-room.tsx` |
 | Alarm | Alarm | 3667 | `accommodationRoom.alarm.deviceId` | `accommodation-room.tsx` |
 | Zone temperature | Zone temp | 4147 | `accommodationRoom.zoneTemperature.deviceId` | `accommodation-room.tsx` |
-| PLC - SIEMENS (DI/DO word) | Counter | 6563 | `fireFightingRoom.doWord.deviceId` | `pump-room.tsx` (PLC tab) |
+| PLC - SIEMENS (DO word) | Counter | 6563 | `fireFightingRoom.doWord.deviceId` | `pump-room.tsx` (PLC tab) |
 | Pressure Transmitter - Pump 1 | Counter | 6983 | `pumpRoom.counterIds.pressurePump1` | `pump-room.tsx` (Inject tab) |
 | Pressure Transmitter - Pump 2 | Counter | 7019 | `pumpRoom.counterIds.pressurePump2` | `pump-room.tsx` (Inject tab) |
 
@@ -111,9 +111,10 @@ type in [`MQTT.md`](./MQTT.md).
 
 ### Pump Room — PLC tab (`src/app/stations/pump-room.tsx`)
 
-Injects the **combined DI/DO word** into the PLC-SIEMENS counter (6563) via
-`SetValue`. DI is read-only (from metrics); DO is controllable (toggles). See
-§5 for the bit layout. 5 s silent expiry if the echo never confirms.
+Injects the **DO word** into the PLC-SIEMENS counter (6563) via `SetValue`.
+**Digital Output only** — Digital Input is not surfaced on this screen. Each DO
+toggle sets its bit in the draft word and publishes the single word (see §5).
+5 s silent expiry if the echo never confirms.
 
 ### Pump Room — Inject Value tab
 
@@ -127,61 +128,51 @@ danger) is computed locally from the draft mA thresholds.
 
 ---
 
-## 5. DI/DO bit unpacking (PLC - SIEMENS, id 6563)
+## 5. DO bit unpacking (PLC - SIEMENS, id 6563)
 
-The PLC exposes its digital I/O bit-packed into 16-bit Modbus words (uint16).
-The app treats them as a **single 32-bit combined value** stored in the counter:
+**Digital Output only.** Digital Input is not surfaced on this screen. The DO
+word is a dedicated **16-bit Modbus word (uint16)**, re-based to **bit 0** —
+channel 1 → bit 0. No DI area is packed in, so the published value is just the
+DO word itself:
 
 ```
-combined = word1 * 65536 + word0          // little-word-first
-DI = combined bits  0..11   (12 inputs, read-only)
-DO = combined bits 12..23   (12 outputs, controllable)
+SetValue = doWord            // single 16-bit word, bit 0 = LSB
+DO = bits 0..13  (14 outputs, controllable)
+     bits 14..15 spare (kept 0, not rendered)
 ```
 
 Helpers live in `src/lib/bit-packed-word.ts` (`unpackChannels`, `getChannelBit`,
 `setChannelBit`). Each word is forced to **uint16** via `toUint16` before any
 shift — bit15 is a flag, not a sign bit, so signed int16 payloads decode
-correctly. The bit map is supplied by the caller (`DI_BIT_MAP` / `DO_BIT_MAP` in
-`pump-room.tsx`) so the layout can change without touching the helpers.
+correctly. The bit map is supplied by the caller (`DO_BIT_MAP` in `pump-room.tsx`,
+mask `DO_WORD_MASK = 0xffff`) so the layout can change without touching the
+helpers. Source of the mapping: [`docs/DO.md`](../DO.md).
 
-### Digital Inputs — bits 0–11 (read-only)
+### Digital Outputs — bits 0–13 (controllable)
 
-| Bit | Key | Label | Ch / Slot | Contact |
-|---|---|---|---|---|
-| 0 | emergencyStop | Emergency Stop | 1 / 1 | NC |
-| 1 | btnStartPumpA | Button – Start Pump A | 2 / 1 | NO |
-| 2 | btnStopPumpA | Button – Stop Pump A | 3 / 1 | NC |
-| 3 | btnStartPumpB | Button – Start Pump B | 4 / 1 | NO |
-| 4 | btnStopPumpB | Button – Stop Pump B | 5 / 1 | NC |
-| 5 | btnZoneRelease | Button – Zone Release | 6 / 1 | NO |
-| 6 | selectorLocalRemote | Selector Local / Remote | 7 / 1 | NO |
-| 7 | r3PumpARunning | R3 – Pump A Status | 8 / 1 | NO |
-| 8 | r4PumpBRunning | R4 – Pump B Status | 9 / 1 | NO |
-| 9 | r5PumpCRunning | R5 – Pump C Status | 10 / 1 | NO |
-| 10 | levelSwitchLow | Level Switch – Low Tank | 11 / 1 | NO |
-| 11 | flowSwitch | Flow Switch | 12 / 1 | NO |
+| Bit | Key | Label |
+|---|---|---|
+| 0 | pumpARunning | Pump A Running |
+| 1 | pumpBRunning | Pump B Running |
+| 2 | sv1Opened | SV1 Opened |
+| 3 | sv1Closed | SV1 Closed |
+| 4 | sv2Opened | SV2 Opened |
+| 5 | sv2Closed | SV2 Closed |
+| 6 | localZoneActivation | Local Zone Activation |
+| 7 | remoteZoneActivation | Remote Zone Activation |
+| 8 | fgsConfFire | FGS Confirmed Fire |
+| 9 | levelTankHigh | Level Tank High |
+| 10 | levelTankLow | Level Tank Low |
+| 11 | pumpCRunning | Pump C Running |
+| 12 | localMode | Local Mode |
+| 13 | remoteMode | Remote Mode |
+| 14–15 | — | *spare* |
 
-### Digital Outputs — bits 12–23 (controllable)
-
-| Bit | Key | Label | Ch / Slot |
-|---|---|---|---|
-| 12 | solenoidValve1 | R1 – Solenoid Valve 1 Open | 1 / 1 |
-| 13 | solenoidValve2 | R2 – Solenoid Valve 2 Open | 2 / 1 |
-| 14 | r3PumpAStart | R3 – Pump A Start | 3 / 1 |
-| 15 | r4PumpBStart | R4 – Pump B Start | 4 / 1 |
-| 16 | r5PumpCStart | R5 – Pump C Start | 5 / 1 |
-| 17 | buzzer | Buzzer | 6 / 1 |
-| 18 | lampZoneRelease | Lamp – Zone Release | 7 / 1 |
-| 19 | lampPumpARunning | Lamp – Pump A Running | 8 / 1 |
-| 20 | lampPumpAStoped | Lamp – Pump A Stopped | 9 / 1 |
-| 21 | lampPumpBRunning | Lamp – Pump B Running | 10 / 1 |
-| 22 | lampPumpBStoped | Lamp – Pump B Stopped | 1 / 2 |
-| 23 | lampLocalRemote | Lamp – Local / Remote | 2 / 2 |
-
-**Write path:** toggling a DO sets its bit in the draft words, recombines to the
-32-bit value, and publishes `SetValue(6563, combined)`. **Read path:** metrics
-`Adjustable value` on 6563 is rounded, split into `word0`/`word1`, then DI is
-unpacked from the confirmed words and DO reflected from the draft words.
+**Write path:** toggling a DO sets its bit in the draft word (`setChannelBit`,
+masked to `0xffff`) and publishes `SetValue(6563, doWord)`. **Read path:** metrics
+`Adjustable value` on 6563 is rounded, masked to the 16-bit DO word, stored as the
+confirmed word; the draft tracks the echo unless a toggle is still awaiting its
+ack (`isPendingDoRef`).
 
 ---
 
