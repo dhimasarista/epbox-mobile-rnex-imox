@@ -21,11 +21,12 @@ jadi ada dua modbus register :
 - From_PLC : 1 word (uint16)
 di mqtt : device id nya 6563
     - W[0] : Nerima DO Output (Bit Unpacking)
+saya mau ubah ketika tidak konek mqtt jadi simulasi tanpa mqtt untuk check value kalkulasi bit unpacking/packing. jadi ketika konek mqtt kita bakal nerima value dari plc ke gateway ke mqtt ke mobile/dashboard
 - To_PLC : 4 word (uint64)
 di mqtt : device id nya 7193
-    - W[0] : Ngirim DO Output (Bit Packing)
-    - W[1] : Pressure Transmitter 1
-    - W[2] : Pressure Transmitter 2
+    - W[0] : Pressure Transmitter 1
+    - W[1] : Pressure Transmitter 2
+    - W[2] : Ngirim Pump Activation (didashboard, tapi dimobile ini tambahkan ui nya untuk simulasi)
     - W[3] : spare
 
 

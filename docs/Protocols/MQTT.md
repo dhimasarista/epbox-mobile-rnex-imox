@@ -25,14 +25,16 @@ Each command is a JSON payload:
 | Temperature | Counter | 3585 | `.../acc-room/metrics` |
 | Zone temperature | Zone temperature | 4147 | `.../acc-room/metrics` |
 | Alarm | Alarm | 3667 | `.../acc-room/metrics` |
-| PLC - SIEMENS | Counter | 6563 | `.../metrics` |
+| FROM PLC - SIEMENS | Counter | 6563 | `.../metrics` |
+| TO PLC - SIEMENS | Counter | 7193 | `.../metrics` |
 | Pressure Transmitter - Pump 1 | Counter | 6983 | `.../pressure-transmitter` |
 | Pressure Transmitter - Pump 2 | Counter | 7019 | `.../pressure-transmitter` |
 
 ### Counter commands
 
-Applies to: Smoke Status (3549), Temperature (3585), PLC - SIEMENS (6563),
-Pressure Transmitter - Pump 1 (6983), Pressure Transmitter - Pump 2 (7019).
+Applies to: Smoke Status (3549), Temperature (3585), FROM PLC - SIEMENS (6563),
+TO PLC - SIEMENS (7193), Pressure Transmitter - Pump 1 (6983),
+Pressure Transmitter - Pump 2 (7019).
 
 | Command | Payload |
 |---|---|
@@ -109,7 +111,8 @@ Applies to: Zone temperature (4147).
 ## Receive Signals
 
 - `epbox/imox/demo/site/batam/edge/cg-uwp40-01/metrics`
-    - PLC - SIEMENS (6563)
+    - FROM PLC - SIEMENS (6563) — DO output status (read-only, 14 channels)
+    - TO PLC - SIEMENS (7193) — write target (packed PT1/PT2/Pump Activation); not consumed on read
 - `epbox/imox/demo/site/batam/edge/cg-uwp40-01/pressure-transmitter`
     - Pressure Transmitter - Pump 1 (6983)
     - Pressure Transmitter - Pump 2 (7019)
@@ -132,29 +135,36 @@ publish/echo reconciliation rules.
 | Temperature (3585) | `accommodationRoom.counterIds.temperature` | `stations/accommodation-room.tsx` |
 | Alarm (3667) | `accommodationRoom.alarm.deviceId` | `stations/accommodation-room.tsx` |
 | Zone temperature (4147) | `accommodationRoom.zoneTemperature.deviceId` | `stations/accommodation-room.tsx` |
-| PLC - SIEMENS (6563) | `fireFightingRoom.doWord.deviceId` | `stations/pump-room.tsx` (PLC tab) |
-| Pressure Transmitter - Pump 1 (6983) | `pumpRoom.counterIds.pressurePump1` | `stations/pump-room.tsx` (Inject tab) |
-| Pressure Transmitter - Pump 2 (7019) | `pumpRoom.counterIds.pressurePump2` | `stations/pump-room.tsx` (Inject tab) |
+| FROM PLC - SIEMENS (6563) | `fireFightingRoom.fromPlc.deviceId` | `stations/pump-room.tsx` (FROM PLC tab, read) |
+| TO PLC - SIEMENS (7193) | `fireFightingRoom.toPlc.deviceId` | `stations/pump-room.tsx` (TO PLC tab, write) |
+| Pressure Transmitter - Pump 1 (6983) | inject-only → TO PLC `W[0]` | `stations/pump-room.tsx` (TO PLC tab) |
+| Pressure Transmitter - Pump 2 (7019) | inject-only → TO PLC `W[1]` | `stations/pump-room.tsx` (TO PLC tab) |
 
-**Reconciliation rule (Counter functions).** A control publishes `SetValue` on
-`cmd/ot`, marks the field *pending*, and holds the local draft until a matching
-value is echoed back on `metrics`. The confirmed value (chip / tone / bar)
-always tracks the gateway echo.
+**Reconciliation rule (echoed Counter functions).** An echoed control (smoke,
+temperature) publishes `SetValue` on `cmd/ot`, marks the field *pending*, and
+holds the local draft until a matching value is echoed back on `metrics`; the
+confirmed value tracks the echo. The pump room does **not** use this — DO is
+receive-only, and its TO PLC writes are fire-and-forget.
 
-**PLC DO word encoding.** The Pump Room PLC tab shows **Digital Output only**
-(Digital Input is not surfaced). The DO state is a single 16-bit word, re-based to
-**bit 0** (channel 1 → bit 0 … up to bit 13; bits 14–15 spare). A toggle sets its
-bit and publishes `SetValue` with that word verbatim (no DI area packed in). The
-bit-to-signal map lives in `DO_BIT_MAP` (`stations/pump-room.tsx`), sourced from
-`docs/DO.md`; full layout in `docs/Protocols/Dashboard-SCADA.md` §5.
+**PLC encoding (FROM / TO split).** The PLC uses two registers (`docs/DO.md`),
+opposite directions: **FROM PLC (6563)** is read-only — one uint16 word carrying
+the 14-channel DO output status, bit-unpacked on read (the app never writes DO).
+**TO PLC (7193)** is the sole write target: a packed **uint64** (4×uint16) where
+`W[0]` = PT1 counter, `W[1]` = PT2 counter, `W[2]` = Pump Activation (momentary
+`1`), `W[3]` = spare. A pressure slider publishes one `SetValue(7193, packed)`
+with `W[2]=0`; the Pump Activation button publishes once with `W[2]=1`. Unchanged
+words are re-sent from the latest draft so nothing is clobbered. When MQTT is
+offline the tab runs a **local simulation** to verify the pack/unpack maths.
+`DO_BIT_MAP` / `packToPlcCommand` live in `pump-room.tsx` / `mqtt-topics.ts`; full
+layout in `docs/Protocols/Dashboard-SCADA.md` §5.
 
-**Pressure transmitter encoding.** The pressure counter register is a Modbus
-**unsigned integer**, so a fractional mA cannot be written directly. The app
-encodes it as **`mA × 10`** on write (`SetValue` = `114` for `11.4 mA`) and
-divides by 10 on read, preserving the 0.1 mA slider step; an echo within
-±0.05 mA counts as the ack. Encoding lives in `pressureMaToCounter` /
-`pressureCounterToMa` (`src/lib/mqtt-topics.ts`). Confirm the real echo scale
-with `scripts/mqtt-probe.mjs` before trusting this against a live gateway.
+**Pressure transmitter encoding (inject-only).** PT-001 / PT-002 are written, not
+read back — their set-points are packed into TO PLC `W[0]` / `W[1]`. Each word is a
+Modbus **unsigned integer**, so a fractional mA cannot be stored; the app encodes
+**`mA × 10`** before packing (`114` for `11.4 mA`), preserving the 0.1 mA slider
+step. Encoding lives in `pressureMaToCounter` (`src/lib/mqtt-topics.ts`). Confirm
+the PLC's expected scale with `scripts/mqtt-probe.mjs` before trusting a live
+gateway.
 
 ## Reference
 

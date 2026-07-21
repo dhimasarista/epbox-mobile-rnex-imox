@@ -2,19 +2,18 @@ import { Slider } from '@expo/ui/community/slider';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   type BitChannelMap,
-  setChannelBit,
   unpackChannels,
 } from '@/lib/bit-packed-word';
 import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
-  getCarloGavazziMetricsSignalByName,
-  getPumpRoomPressureState,
+  getCarloGavazziCounterNumericValue,
+  packToPlcCommand,
   pressureMaToCounter,
 } from '@/lib/mqtt-topics';
 import {
@@ -35,20 +34,12 @@ type ActiveTab = 'plc' | 'inject';
 type DerivedAlarmLevel = 'clear' | 'warning' | 'danger';
 type DerivedAlarm = { level: DerivedAlarmLevel; conditions: string[] };
 
-// A pressure SetValue that has been published but not yet echoed back by metrics.
-type PendingPressureCommand = {
-  counterId: number;
-  expectedMa: number;
-  requestedLabel: string;
-  sentAt: number;
-};
-type PendingPressureMap = Partial<Record<PumpRoomPlcInputKey, PendingPressureCommand>>;
-
-// ─── PLC Digital Output Definitions ──────────────────────────────────────────
-// Digital Output only — Digital Input is not surfaced on this screen. The DO
-// word is a dedicated 16-bit register (bit 0 = LSB). Per docs/DO.md: bits 0..13
-// carry the functional outputs, bits 14..15 are spare. The published SetValue
-// is that single word, no DI area packed in.
+// ─── FROM PLC — Digital Output status (id 6563, read-only) ───────────────────
+// The PLC reports its DO output as one uint16 word (bit 0 = LSB). Per docs/DO.md
+// bits 0..13 are functional channels, bits 14..15 spare. The app RECEIVES and
+// bit-unpacks this word for display — it never writes DO. When MQTT is offline
+// the screen switches to simulation: the user types a raw decimal and watches the
+// same unpacking, to verify the bit calculation.
 
 const DO_CHANNELS = [
   { key: 'pumpARunning',         label: 'Pump A Running' },
@@ -69,8 +60,6 @@ const DO_CHANNELS = [
 
 type DoKey = (typeof DO_CHANNELS)[number]['key'];
 
-// Re-based to bit 0: DO occupies its own word, one bit per channel in order.
-// Bits 14 & 15 are spare (not rendered, kept 0).
 const DO_BIT_MAP: BitChannelMap<DoKey> = {
   pumpARunning:         { wordIndex: 0, bitIndex: 0  },
   pumpBRunning:         { wordIndex: 0, bitIndex: 1  },
@@ -91,6 +80,10 @@ const DO_BIT_MAP: BitChannelMap<DoKey> = {
 // Full 16-bit DO word (bits 14 & 15 spare).
 const DO_WORD_MASK = 0xffff;
 
+function parseWordInput(text: string) {
+  return (Number.parseInt(text, 10) || 0) & DO_WORD_MASK;
+}
+
 // ─── Inject Value Constants (4–20 mA signal) ────────────────────────────────
 
 const MA_MIN = 4;
@@ -99,8 +92,6 @@ const MA_STEP = 0.1;
 
 // Debounce slider drags before publishing so we don't flood the OT channel.
 const COMMAND_DEBOUNCE_MS = 250;
-// Metrics echo mA as a float; treat it as an ack when within half a step.
-const PRESSURE_ACK_TOLERANCE_MA = 0.05;
 const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 
 // PT-001 / PT-002: alarm thresholds in mA
@@ -122,6 +113,16 @@ function getPressureTone(mA: number): SignalTone {
   if (mA >= PRESSURE_DANGER_MA)  return 'danger';
   if (mA >= PRESSURE_WARNING_MA) return 'warning';
   return 'normal';
+}
+
+// Pack the current pressure drafts (+ an optional momentary pump-activation) into
+// the TO PLC uint64 (7193): W0=PT1, W1=PT2, W2=Pump Activation, W3=spare.
+function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0) {
+  return packToPlcCommand({
+    pressurePump1Counter: pressureMaToCounter(parseMa(inputs.pressurePump1)),
+    pressurePump2Counter: pressureMaToCounter(parseMa(inputs.pressurePump2)),
+    pumpActivation,
+  });
 }
 
 function getDerivedAlarm(form: PumpRoomPlcInputs): DerivedAlarm {
@@ -169,28 +170,28 @@ function TabBar({ active, onChange }: { active: ActiveTab; onChange: (t: ActiveT
         onPress={() => onChange('plc')}
         accessibilityRole="tab"
         accessibilityState={{ selected: active === 'plc' }}>
-        <Text style={[s.tabBtnText, active === 'plc' && s.tabBtnTextActive]}>PLC</Text>
+        <Text style={[s.tabBtnText, active === 'plc' && s.tabBtnTextActive]}>FROM PLC</Text>
       </TouchableOpacity>
       <TouchableOpacity
         style={[s.tabBtn, active === 'inject' && s.tabBtnActive]}
         onPress={() => onChange('inject')}
         accessibilityRole="tab"
         accessibilityState={{ selected: active === 'inject' }}>
-        <Text style={[s.tabBtnText, active === 'inject' && s.tabBtnTextActive]}>Inject Value</Text>
+        <Text style={[s.tabBtnText, active === 'inject' && s.tabBtnTextActive]}>TO PLC</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-// ─── PLC Tab sub-components ───────────────────────────────────────────────────
+// ─── FROM PLC tab sub-components ──────────────────────────────────────────────
 
-function GatewayWordDisplay({ doWord }: { doWord: number }) {
+function GatewayWordDisplay({ doWord, simulation }: { doWord: number; simulation: boolean }) {
   const doBits = (doWord & DO_WORD_MASK).toString(2).padStart(16, '0');
   return (
     <View style={s.ioCountRow}>
       <View style={s.ioCountCard}>
         <Text style={s.ioCountValue}>{doWord}</Text>
-        <Text style={s.ioCountLabel}>DO Word (SetValue)</Text>
+        <Text style={s.ioCountLabel}>{simulation ? 'DO Word (SIM)' : 'DO Word (FROM PLC)'}</Text>
       </View>
       <View style={s.ioCountCard}>
         <Text style={[s.ioCountValue, s.ioCountValueBin]}>{doBits}</Text>
@@ -200,30 +201,64 @@ function GatewayWordDisplay({ doWord }: { doWord: number }) {
   );
 }
 
-function DoControlRow({ ch, value, onToggle }: { ch: (typeof DO_CHANNELS)[number]; value: boolean; onToggle: () => void }) {
-  const activeColor       = AppColors.success;
-  const activeBgColor     = AppColors.surfaceSuccess;
-  const activeBorderColor = '#9BD7B6';
+function SimFromPlcInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <View style={[s.doRow, value && { backgroundColor: activeBgColor, borderColor: activeBorderColor }]}>
-      <View style={s.doLeft}>
-        <View style={[s.doIndicator, { backgroundColor: value ? activeColor : AppColors.border }]} />
-        <Text style={s.diLabel} numberOfLines={1}>{ch.label}</Text>
-      </View>
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onPress={onToggle}
-        style={[s.doToggleBtn, value && { backgroundColor: activeColor }]}
-        accessibilityRole="switch"
-        accessibilityState={{ checked: value }}
-        accessibilityLabel={ch.label}>
-        <Text style={[s.doToggleBtnText, value && s.doToggleBtnTextActive]}>{value ? 'ON' : 'OFF'}</Text>
-      </TouchableOpacity>
+    <View style={s.simInputCard}>
+      <Text style={s.simInputLabel}>Simulasi FROM_PLC — nilai desimal (0–65535)</Text>
+      <TextInput
+        style={s.simInput}
+        value={value}
+        onChangeText={(t) => onChange(t.replace(/[^0-9]/g, '').slice(0, 5))}
+        keyboardType="number-pad"
+        placeholder="0"
+        placeholderTextColor={AppColors.textSubtle}
+        accessibilityLabel="Simulasi nilai FROM PLC"
+      />
     </View>
   );
 }
 
-// ─── Inject Value Tab sub-components ─────────────────────────────────────────
+function DoStatusRow({ ch, value }: { ch: (typeof DO_CHANNELS)[number]; value: boolean }) {
+  const activeColor = AppColors.success;
+  return (
+    <View style={[s.doRow, value && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' }]}>
+      <View style={s.doLeft}>
+        <View style={[s.doIndicator, { backgroundColor: value ? activeColor : AppColors.border }]} />
+        <Text style={s.diLabel} numberOfLines={1}>{ch.label}</Text>
+      </View>
+      <View style={[s.doStatusPill, value && { backgroundColor: activeColor, borderColor: activeColor }]}>
+        <Text style={[s.doStatusPillText, value && s.doStatusPillTextOn]}>{value ? 'ON' : 'OFF'}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── TO PLC tab sub-components ───────────────────────────────────────────────
+
+function ToPlcWordDisplay({
+  pt1Counter,
+  pt2Counter,
+  pumpActivation,
+  packed,
+}: {
+  pt1Counter: number;
+  pt2Counter: number;
+  pumpActivation: number;
+  packed: number;
+}) {
+  return (
+    <View style={s.ioCountRow}>
+      <View style={s.ioCountCard}>
+        <Text style={s.ioCountValue} numberOfLines={1} adjustsFontSizeToFit>{packed}</Text>
+        <Text style={s.ioCountLabel}>TO_PLC uint64 (to send)</Text>
+      </View>
+      <View style={s.ioCountCard}>
+        <Text style={[s.ioCountValue, s.ioCountValueBin]}>{`${pt1Counter} · ${pt2Counter} · ${pumpActivation}`}</Text>
+        <Text style={s.ioCountLabel}>W0 · W1 · W2</Text>
+      </View>
+    </View>
+  );
+}
 
 function EngineeringSignalBands({ tone }: { tone: SignalTone }) {
   return (
@@ -259,24 +294,19 @@ function PressureBlockBar({ bar, tone }: { bar: number; tone: SignalTone }) {
 
 function PressureSlider({
   label,
-  draftValue,
-  confirmedValue,
-  isPending,
+  value,
   onChange,
 }: {
   label: string;
-  draftValue: string;
-  confirmedValue: string;
-  isPending: boolean;
+  value: string;
   onChange: (v: string) => void;
 }) {
-  // Slider position follows the local draft; tone/chip/bar follow the gateway
-  // confirmed value — same "confirmed reflects reality" rule as the room screen.
-  const draftMa = parseMa(draftValue);
-  const confirmedMa = parseMa(confirmedValue);
-  const tone = getPressureTone(confirmedMa);
+  // Inject-only: the slider value is the single source of truth (no gateway
+  // echo to reconcile against), so tone / chip / bar all read from it directly.
+  const draftMa = parseMa(value);
+  const tone = getPressureTone(draftMa);
   const palette = getSignalPalette(tone);
-  const bar  = maToPressureBar(confirmedMa);
+  const bar  = maToPressureBar(draftMa);
   const statusLabel = tone === 'danger'
     ? `≥ ${PRESSURE_DANGER_MA} mA`
     : tone === 'warning'
@@ -287,8 +317,8 @@ function PressureSlider({
       <View style={stationStyles.fieldHeaderRow}>
         <Text style={stationStyles.fieldLabel}>{label}</Text>
         <View style={[stationStyles.signalValueChip, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <View style={[stationStyles.signalValueDot, { backgroundColor: isPending ? AppColors.warning : palette.accent }]} />
-          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatMa(confirmedMa)}</Text>
+          <View style={[stationStyles.signalValueDot, { backgroundColor: palette.accent }]} />
+          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatMa(draftMa)}</Text>
         </View>
       </View>
       <View style={[stationStyles.signalSliderShell, tone === 'normal' && stationStyles.signalSliderShellNormal, tone === 'warning' && stationStyles.signalSliderShellWarning, tone === 'danger' && stationStyles.signalSliderShellDanger]}>
@@ -321,6 +351,21 @@ function PressureSlider({
   );
 }
 
+function PumpActivationButton({ simulation, onFire }: { simulation: boolean; onFire: () => void }) {
+  return (
+    <TouchableOpacity
+      style={[s.pumpActBtn, simulation && s.pumpActBtnSim]}
+      onPress={onFire}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel="Pump Activation">
+      <Feather name="zap" size={16} color={AppColors.textInverse} />
+      <Text style={s.pumpActBtnText}>
+        {simulation ? 'Simulasi Pump Activation' : 'Kirim Pump Activation'}
+      </Text>
+    </TouchableOpacity>
+  );
+}
 
 function DerivedAlarmCard({ alarm }: { alarm: DerivedAlarm }) {
   const isClear   = alarm.level === 'clear';
@@ -343,99 +388,85 @@ function DerivedAlarmCard({ alarm }: { alarm: DerivedAlarm }) {
 export default function PumpRoom() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('plc');
 
-  // ── PLC tab state ──
-  const { publishTopic, recordLatencySample, status } = useMqtt();
-  const recordLatencySampleRef = useRef(recordLatencySample);
-  recordLatencySampleRef.current = recordLatencySample;
+  const { publishTopic, status } = useMqtt();
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
-  const [draftDoWord, setDraftDoWord] = useState(0);
-  const [lastDoWord, setLastDoWord] = useState(0);
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
-  const [isPendingDo, setIsPendingDo] = useState(false);
-  const isPendingDoRef = useRef(isPendingDo);
-  isPendingDoRef.current = isPendingDo;
-  const doExpireTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const doBaselineReceivedAtRef = useRef<number | null>(null);
-  const doState = unpackChannels([draftDoWord], DO_BIT_MAP);
 
-  // ── Inject Value tab state ──
-  // draft = what the slider shows / user is dragging; confirmed = last value
-  // echoed back by the gateway metrics. Mirrors the accommodation-room mapping.
+  // When MQTT is offline, the whole screen runs as a local pack/unpack simulator.
+  const isSimulation = status !== 'connected';
+
+  // ── FROM PLC tab state (DO status, read-only) ──
+  const [lastDoWord, setLastDoWord] = useState(0);   // received from FROM PLC (6563)
+  const [simDoInput, setSimDoInput] = useState('0'); // simulation: raw decimal typed by user
+  const doWord = isSimulation ? parseWordInput(simDoInput) : lastDoWord;
+  const doState = unpackChannels([doWord], DO_BIT_MAP);
+
+  // ── TO PLC tab state (inject PT-001/PT-002 + momentary pump activation) ──
   const [injectDraft, setInjectDraft] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
-  const [injectConfirmed, setInjectConfirmed] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
-  const [pendingPressure, setPendingPressure] = useState<PendingPressureMap>({});
-  const pendingPressureRef = useRef(pendingPressure);
-  pendingPressureRef.current = pendingPressure;
+  const injectDraftRef = useRef(injectDraft);
+  injectDraftRef.current = injectDraft;
   const pressureDebounceRef = useRef<Partial<Record<PumpRoomPlcInputKey, ReturnType<typeof setTimeout>>>>({});
   const hasHydratedRef = useRef(false);
   const derivedAlarm = getDerivedAlarm(injectDraft);
-  const isPressurePending = Object.keys(pendingPressure).length > 0;
+  // Since the packed TO PLC word (7193) has no per-field echo, a successful
+  // publish (or a simulation) just flashes a transient note for ~2 s.
+  const [injectFlash, setInjectFlash] = useState<string | null>(null);
+  const injectFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── PLC: sync metrics → DO word ──
+  // Live TO PLC preview (pumpActivation = 0; it is momentary, only 1 on fire).
+  const pt1Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump1));
+  const pt2Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump2));
+  const toPlcPacked = packInputs(injectDraft, 0);
+
+  const flashInject = useCallback((message: string) => {
+    setInjectFlash(message);
+    if (injectFlashTimeoutRef.current) clearTimeout(injectFlashTimeoutRef.current);
+    injectFlashTimeoutRef.current = setTimeout(() => setInjectFlash(null), 2_000);
+  }, []);
+
+  // ── FROM PLC: sync metrics → DO word (only while connected) ──
   useEffect(() => {
-    if (!metricsTopic.payload) return;
-    const sig = getCarloGavazziMetricsSignalByName(
+    if (status !== 'connected' || !metricsTopic.payload) return;
+    const value = getCarloGavazziCounterNumericValue(
       metricsTopic.payload,
-      CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.doWord.deviceId,
-      'Adjustable value'
+      CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.fromPlc.deviceId
     );
-    if (!sig || typeof sig.value !== 'number') return;
-    const timer = setTimeout(() => {
-      const doWord = Math.round(sig.value as number) & DO_WORD_MASK;
-      setLastDoWord(doWord);
-      // Draft is optimistic while a toggle is in flight; otherwise it tracks the
-      // gateway echo so externally-driven output changes stay reflected.
-      if (!isPendingDoRef.current) setDraftDoWord(doWord);
-    }, 0);
+    if (value === null) return;
+    const timer = setTimeout(() => setLastDoWord(Math.round(value) & DO_WORD_MASK), 0);
     return () => clearTimeout(timer);
-  }, [metricsReceivedAt, metricsTopic.payload]);
+  }, [metricsReceivedAt, metricsTopic.payload, status]);
 
-  // ── PLC: clear pending when gateway echoes back ──
-  useEffect(() => {
-    if (!isPendingDo || metricsReceivedAt === null) return;
-    if (doBaselineReceivedAtRef.current !== null && metricsReceivedAt <= doBaselineReceivedAtRef.current) return;
-    if (doExpireTimeoutRef.current !== null) { clearTimeout(doExpireTimeoutRef.current); doExpireTimeoutRef.current = null; }
-    doBaselineReceivedAtRef.current = null;
-    setIsPendingDo(false);
-  }, [isPendingDo, metricsReceivedAt]);
+  // Every write targets the TO PLC counter (7193). A caller supplies only the
+  // field it changes; the rest come from the latest drafts so no word is clobbered.
+  const publishToPlc = useCallback(
+    (overrides: { pressurePump1Ma?: number; pressurePump2Ma?: number; pumpActivation?: number }) => {
+      const pressurePump1Ma = overrides.pressurePump1Ma ?? parseMa(injectDraftRef.current.pressurePump1);
+      const pressurePump2Ma = overrides.pressurePump2Ma ?? parseMa(injectDraftRef.current.pressurePump2);
+      const packed = packToPlcCommand({
+        pressurePump1Counter: pressureMaToCounter(pressurePump1Ma),
+        pressurePump2Counter: pressureMaToCounter(pressurePump2Ma),
+        pumpActivation: overrides.pumpActivation ?? 0,
+      });
+      return publishTopic(
+        'gatewayOtCommand',
+        buildCarloGavazziOtCommand(
+          CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.toPlc.deviceId,
+          'SetValue',
+          packed
+        ),
+        { qos: 0, retain: false }
+      );
+    },
+    [publishTopic]
+  );
 
-  const toggleDo = useCallback((key: DoKey) => {
-    const nextWord = setChannelBit([draftDoWord], DO_BIT_MAP, key, !doState[key])[0] & DO_WORD_MASK;
-    setDraftDoWord(nextWord);
-    if (status !== 'connected') { setLastCommandError('MQTT disconnected.'); return; }
-    doBaselineReceivedAtRef.current = metricsReceivedAt;
-    setIsPendingDo(true);
-    if (doExpireTimeoutRef.current !== null) clearTimeout(doExpireTimeoutRef.current);
-    doExpireTimeoutRef.current = setTimeout(() => {
-      doExpireTimeoutRef.current = null;
-      doBaselineReceivedAtRef.current = null;
-      setIsPendingDo(false);
-      setLastCommandError(null);
-    }, 5_000);
-    void publishTopic(
-      'gatewayOtCommand',
-      // DO word only (0..4095) — re-based to bit 0, no DI area packed in.
-      buildCarloGavazziOtCommand(CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.doWord.deviceId, 'SetValue', nextWord),
-      { qos: 0, retain: false }
-    ).then(() => { setLastDoWord(nextWord); setLastCommandError(null); })
-     .catch((err: unknown) => { setLastCommandError(err instanceof Error ? err.message : 'SetValue failed.'); });
-  }, [draftDoWord, doState, metricsReceivedAt, publishTopic, status]);
-
-  const statusHint = useMemo(() => {
-    if (lastCommandError) return lastCommandError;
-    if (isPendingDo) return 'Waiting for gateway response…';
-    if (status !== 'connected') return 'MQTT disconnected.';
-    return null;
-  }, [isPendingDo, lastCommandError, status]);
-
-  // ── Inject Value: hydrate from storage ──
+  // ── TO PLC: hydrate pressure drafts from storage ──
   useEffect(() => {
     let mounted = true;
     getStoredPumpRoomPlcInputs().then((stored) => {
       if (!mounted) return;
       setInjectDraft(stored);
-      setInjectConfirmed(stored);
       hasHydratedRef.current = true;
     });
     const debounces = pressureDebounceRef.current;
@@ -445,128 +476,66 @@ export default function PumpRoom() {
         const timer = debounces[key];
         if (timer) clearTimeout(timer);
       });
+      if (injectFlashTimeoutRef.current) clearTimeout(injectFlashTimeoutRef.current);
     };
   }, []);
 
-  useEffect(() => {
-    if (!hasHydratedRef.current) return;
-    void setStoredPumpRoomPlcInputs(injectConfirmed);
-  }, [injectConfirmed]);
-
-  // Drop in-flight pressure commands when the broker session drops.
-  useEffect(() => {
-    if (status === 'connected') return;
-    setPendingPressure({});
-  }, [status]);
-
-  const sendPressureCommand = useCallback(
-    async (key: PumpRoomPlcInputKey, nextMa: number, requestedLabel: string) => {
-      if (status !== 'connected') { setLastCommandError('MQTT disconnected.'); return; }
-      const counterId = CARLO_GAVAZZI_GATEWAY_CONFIG.pumpRoom.counterIds[key];
-      try {
-        await publishTopic(
-          'gatewayOtCommand',
-          // Counter register is an unsigned int — encode mA as (mA × 10).
-          buildCarloGavazziOtCommand(counterId, 'SetValue', pressureMaToCounter(nextMa)),
-          { qos: 0, retain: false }
-        );
-        setPendingPressure((cur) => ({
-          ...cur,
-          [key]: { counterId, expectedMa: nextMa, requestedLabel, sentAt: Date.now() },
-        }));
-        setLastCommandError(null);
-      } catch (err) {
-        setLastCommandError(err instanceof Error ? err.message : `Unable to send ${requestedLabel}.`);
-      }
-    },
-    [publishTopic, status]
-  );
-
-  // ── Inject Value: reconcile pressure counters against metrics echo ──
-  useEffect(() => {
-    if (!metricsTopic.payload) return;
-    const pressureState = getPumpRoomPressureState(metricsTopic.payload);
-    const metricByKey: Record<PumpRoomPlcInputKey, number | null> = {
-      pressurePump1: pressureState.pressurePump1Ma,
-      pressurePump2: pressureState.pressurePump2Ma,
-    };
-    const latestPending = pendingPressureRef.current;
-    const timer = setTimeout(() => {
-      // Confirmed value always tracks the gateway echo.
-      setInjectConfirmed((cur) => {
-        const next = { ...cur };
-        PRESSURE_KEYS.forEach((key) => {
-          const ma = metricByKey[key];
-          if (ma !== null) next[key] = formatMa(ma);
-        });
-        return next;
-      });
-
-      const ackedKeys = PRESSURE_KEYS.filter((key) => {
-        const ma = metricByKey[key];
-        const pending = latestPending[key];
-        return ma !== null && pending && Math.abs(pending.expectedMa - ma) <= PRESSURE_ACK_TOLERANCE_MA;
-      });
-
-      // Draft follows the echo except while a command is still awaiting its ack.
-      setInjectDraft((cur) => {
-        const next = { ...cur };
-        PRESSURE_KEYS.forEach((key) => {
-          const ma = metricByKey[key];
-          if (ma === null) return;
-          if (!latestPending[key] || ackedKeys.includes(key)) {
-            next[key] = formatMa(ma);
-          }
-        });
-        return next;
-      });
-
-      if (ackedKeys.length > 0) {
-        const latestAcked = ackedKeys
-          .map((key) => latestPending[key]!)
-          .sort((left, right) => left.sentAt - right.sentAt)
-          .pop();
-        if (latestAcked) {
-          recordLatencySampleRef.current({
-            label: latestAcked.requestedLabel,
-            requestTopicKey: 'gatewayOtCommand',
-            responseTopicKey: 'gatewayMetrics',
-            startedAt: latestAcked.sentAt,
-            completedAt: metricsReceivedAt ?? Date.now(),
-          });
-        }
-        setPendingPressure((cur) => {
-          const next = { ...cur };
-          ackedKeys.forEach((key) => { delete next[key]; });
-          return next;
-        });
-        setLastCommandError(null);
-      }
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [metricsReceivedAt, metricsTopic.payload]);
-
+  // Slider settle → persist + (if connected) publish the packed word. Offline it
+  // stays local so you can watch the pack calculation without a broker.
   const updatePressureField = useCallback(
     (key: PumpRoomPlcInputKey, value: string) => {
       const nextMa = parseMa(value);
-      setInjectDraft((cur) => ({ ...cur, [key]: formatMa(nextMa) }));
+      const nextInputs = { ...injectDraftRef.current, [key]: formatMa(nextMa) };
+      setInjectDraft(nextInputs);
 
       const existing = pressureDebounceRef.current[key];
       if (existing) clearTimeout(existing);
-      const label = key === 'pressurePump1' ? 'PT-001' : 'PT-002';
       pressureDebounceRef.current[key] = setTimeout(() => {
-        void sendPressureCommand(key, nextMa, `${label} ${formatMa(nextMa)}`);
+        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(nextInputs);
+        if (status !== 'connected') return; // simulation: local only, no publish
+        const label = key === 'pressurePump1' ? 'PT-001' : 'PT-002';
+        void publishToPlc(
+          key === 'pressurePump1' ? { pressurePump1Ma: nextMa } : { pressurePump2Ma: nextMa }
+        )
+          .then(() => {
+            setLastCommandError(null);
+            flashInject(`${label} ${formatMa(nextMa)} injected → PLC`);
+          })
+          .catch((err: unknown) => {
+            setLastCommandError(err instanceof Error ? err.message : `Unable to send ${label}.`);
+          });
       }, COMMAND_DEBOUNCE_MS);
     },
-    [sendPressureCommand]
+    [flashInject, publishToPlc, status]
   );
+
+  // Momentary: fire once with W[2] = 1. Offline it just shows the packed value.
+  const firePumpActivation = useCallback(() => {
+    if (status !== 'connected') {
+      flashInject(`SIM — Pump Activation → ${packInputs(injectDraftRef.current, 1)}`);
+      return;
+    }
+    void publishToPlc({ pumpActivation: 1 })
+      .then(() => {
+        setLastCommandError(null);
+        flashInject('Pump Activation sent → PLC');
+      })
+      .catch((err: unknown) => {
+        setLastCommandError(err instanceof Error ? err.message : 'Pump Activation failed.');
+      });
+  }, [flashInject, publishToPlc, status]);
+
+  const fromPlcStatusHint = useMemo(() => {
+    if (isSimulation) return 'Mode simulasi — MQTT offline. Ketik nilai untuk uji bit unpacking.';
+    return null;
+  }, [isSimulation]);
 
   const injectStatusHint = useMemo(() => {
     if (lastCommandError) return lastCommandError;
-    if (isPressurePending) return 'Injecting pressure — waiting for gateway echo…';
-    if (status !== 'connected') return 'MQTT disconnected.';
+    if (injectFlash) return injectFlash;
+    if (isSimulation) return 'Mode simulasi — TO_PLC dihitung lokal, tidak dikirim.';
     return null;
-  }, [isPressurePending, lastCommandError, status]);
+  }, [injectFlash, isSimulation, lastCommandError]);
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
@@ -577,22 +546,23 @@ export default function PumpRoom() {
 
         {activeTab === 'plc' ? (
           <>
-            <GatewayWordDisplay doWord={lastDoWord} />
+            <GatewayWordDisplay doWord={doWord} simulation={isSimulation} />
 
-            {statusHint ? <Text style={s.statusHint}>{statusHint}</Text> : null}
+            {isSimulation ? <SimFromPlcInput value={simDoInput} onChange={setSimDoInput} /> : null}
+            {fromPlcStatusHint ? <Text style={s.statusHint}>{fromPlcStatusHint}</Text> : null}
 
-            {/* DO */}
+            {/* DO status (received, read-only) */}
             <View style={s.sectionBlock}>
               <View style={s.sectionHeader}>
                 <View style={s.sectionLabelRow}>
                   <View style={[s.sectionDot, { backgroundColor: AppColors.primary }]} />
                   <Text style={s.sectionTitle}>Digital Output</Text>
                 </View>
-                <Text style={[s.sectionBadge, s.sectionBadgeDo]}>Controllable</Text>
+                <Text style={[s.sectionBadge, s.sectionBadgeDo]}>Status · read-only</Text>
               </View>
               <View style={s.doStack}>
                 {DO_CHANNELS.map((ch) => (
-                  <DoControlRow key={ch.key} ch={ch} value={doState[ch.key]} onToggle={() => toggleDo(ch.key)} />
+                  <DoStatusRow key={ch.key} ch={ch} value={doState[ch.key]} />
                 ))}
               </View>
             </View>
@@ -601,19 +571,27 @@ export default function PumpRoom() {
           <>
             {injectStatusHint ? <Text style={s.statusHint}>{injectStatusHint}</Text> : null}
 
-            {/* Sensor calibration — PT-001 / PT-002 in 4–20 mA */}
+            <ToPlcWordDisplay
+              pt1Counter={pt1Counter}
+              pt2Counter={pt2Counter}
+              pumpActivation={0}
+              packed={toPlcPacked}
+            />
+
+            {/* PT-001 / PT-002 inject in 4–20 mA (W0 / W1) */}
             <View style={stationStyles.sectionCard}>
               {PUMP_ROOM_PLC_FIELDS.map((field) => (
                 <PressureSlider
                   key={field.key}
                   label={field.label}
-                  draftValue={injectDraft[field.key]}
-                  confirmedValue={injectConfirmed[field.key]}
-                  isPending={pendingPressure[field.key] !== undefined}
+                  value={injectDraft[field.key]}
                   onChange={(v) => updatePressureField(field.key, v)}
                 />
               ))}
             </View>
+
+            {/* Pump Activation — momentary command (W2) */}
+            <PumpActivationButton simulation={isSimulation} onFire={firePumpActivation} />
 
             {/* Derived alarm */}
             <View style={stationStyles.summaryCard}>
@@ -692,6 +670,28 @@ const s = StyleSheet.create({
   ioCountValueBin: { fontSize: 14, letterSpacing: 1.5, fontVariant: ['tabular-nums'] },
   ioCountLabel: { fontSize: 11, fontWeight: '700', color: AppColors.textMuted },
 
+  simInputCard: {
+    backgroundColor: AppColors.surface,
+    borderRadius: AppRadii.lg,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    padding: AppSpacing.md,
+    gap: AppSpacing.sm,
+  },
+  simInputLabel: { fontSize: 12, fontWeight: '700', color: AppColors.textMuted },
+  simInput: {
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    borderRadius: AppRadii.md,
+    paddingHorizontal: AppSpacing.md,
+    paddingVertical: AppSpacing.sm,
+    fontSize: 18,
+    fontWeight: '800',
+    color: AppColors.text,
+    fontVariant: ['tabular-nums'],
+    backgroundColor: AppColors.surfaceMuted,
+  },
+
   sectionBlock: { gap: AppSpacing.sm },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sectionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: AppSpacing.sm },
@@ -716,13 +716,26 @@ const s = StyleSheet.create({
   },
   doLeft: { flexDirection: 'row', alignItems: 'center', gap: AppSpacing.sm, flex: 1, minWidth: 0 },
   doIndicator: { width: 10, height: 10, borderRadius: AppRadii.full, flexShrink: 0 },
-  doToggleBtn: {
-    minWidth: 56, height: 36, borderRadius: AppRadii.full,
+  doStatusPill: {
+    minWidth: 56, height: 32, borderRadius: AppRadii.full,
     backgroundColor: AppColors.surfaceMuted, borderWidth: 1, borderColor: AppColors.border,
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: AppSpacing.md,
   },
-  doToggleBtnText: { fontSize: 12, fontWeight: '800', color: AppColors.textSubtle, letterSpacing: 0.5 },
-  doToggleBtnTextActive: { color: AppColors.textInverse },
+  doStatusPillText: { fontSize: 12, fontWeight: '800', color: AppColors.textSubtle, letterSpacing: 0.5 },
+  doStatusPillTextOn: { color: AppColors.textInverse },
+
+  pumpActBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: AppSpacing.sm,
+    backgroundColor: AppColors.primary,
+    borderRadius: AppRadii.lg,
+    paddingVertical: AppSpacing.md,
+    paddingHorizontal: AppSpacing.lg,
+  },
+  pumpActBtnSim: { backgroundColor: AppColors.textMuted },
+  pumpActBtnText: { fontSize: 14, fontWeight: '800', color: AppColors.textInverse, letterSpacing: 0.3 },
 
   derivedAlarmCard: {
     flexDirection: 'row',

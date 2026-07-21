@@ -34,6 +34,38 @@ function toUint16(word: number) {
   return word & WORD_MASK;
 }
 
+// ─── Word-level layer (multi-word registers) ───────────────────────────────
+// A register can arrive as ONE decimal that actually encodes several 16-bit
+// words — e.g. the TO PLC counter (7193) is a uint64 = 4×uint16. The mobile
+// app receives that decimal and must unpack it "by words" first (split into
+// W[0..n]), then "by bit" with the channel helpers below. JS bitwise ops are
+// 32-bit, so words at offset ≥32 are placed by division/multiplication, never
+// `>>`/`<<`, which would silently drop everything past W[1].
+
+/**
+ * Split a register decimal into `wordCount` uint16 words, W[0] = least
+ * significant word. Inverse of {@link joinWords}.
+ */
+export function splitWords(value: number, wordCount: number): number[] {
+  const safe = Math.round(value);
+  const words: number[] = [];
+  for (let index = 0; index < wordCount; index += 1) {
+    words.push(Math.floor(safe / 2 ** (index * WORD_BIT_LENGTH)) % (WORD_MASK + 1));
+  }
+  return words;
+}
+
+/**
+ * Join uint16 words (W[0] = least significant) back into one register decimal.
+ * Inverse of {@link splitWords}. Each word is masked to uint16 first.
+ */
+export function joinWords(words: readonly number[]): number {
+  return words.reduce(
+    (acc, word, index) => acc + toUint16(word) * 2 ** (index * WORD_BIT_LENGTH),
+    0
+  );
+}
+
 export function getChannelBit<TKey extends string>(
   words: readonly number[],
   map: BitChannelMap<TKey>,

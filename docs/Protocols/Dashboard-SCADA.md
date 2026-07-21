@@ -1,7 +1,7 @@
 # Custom SCADA Dashboard — CG-UWP40 Integration Reference
 
 Single reference for the mobile app's custom SCADA station screens: which values
-are **injected**, how the **DI/DO word is bit-packed**, the **MQTT** topics /
+are **injected**, how the **DO word is packed / unpacked**, the **MQTT** topics /
 payloads, the **encoding rules**, and how to **probe** the live gateway.
 
 - Gateway: **Carlo Gavazzi UWP4.0**, edge id `cg-uwp40-01`, site
@@ -87,9 +87,10 @@ type in [`MQTT.md`](./MQTT.md).
 | Temperature | Counter | 3585 | `accommodationRoom.counterIds.temperature` | `accommodation-room.tsx` |
 | Alarm | Alarm | 3667 | `accommodationRoom.alarm.deviceId` | `accommodation-room.tsx` |
 | Zone temperature | Zone temp | 4147 | `accommodationRoom.zoneTemperature.deviceId` | `accommodation-room.tsx` |
-| PLC - SIEMENS (DO word) | Counter | 6563 | `fireFightingRoom.doWord.deviceId` | `pump-room.tsx` (PLC tab) |
-| Pressure Transmitter - Pump 1 | Counter | 6983 | `pumpRoom.counterIds.pressurePump1` | `pump-room.tsx` (Inject tab) |
-| Pressure Transmitter - Pump 2 | Counter | 7019 | `pumpRoom.counterIds.pressurePump2` | `pump-room.tsx` (Inject tab) |
+| FROM PLC - SIEMENS (DO status, read) | Counter | 6563 | `fireFightingRoom.fromPlc.deviceId` | `pump-room.tsx` (FROM PLC tab) |
+| TO PLC - SIEMENS (packed write) | Counter | 7193 | `fireFightingRoom.toPlc.deviceId` | `pump-room.tsx` (TO PLC tab) |
+| Pressure Transmitter - Pump 1 | Counter | 6983 | — (inject-only, packed into 7193 `W[0]`) | `pump-room.tsx` (TO PLC tab) |
+| Pressure Transmitter - Pump 2 | Counter | 7019 | — (inject-only, packed into 7193 `W[1]`) | `pump-room.tsx` (TO PLC tab) |
 
 ---
 
@@ -109,46 +110,65 @@ type in [`MQTT.md`](./MQTT.md).
 - Alarm commands use a **5 s silent write-guard** per command; counter commands
   clear only on a matching echo.
 
-### Pump Room — PLC tab (`src/app/stations/pump-room.tsx`)
+### Pump Room — FROM PLC tab (`src/app/stations/pump-room.tsx`)
 
-Injects the **DO word** into the PLC-SIEMENS counter (6563) via `SetValue`.
-**Digital Output only** — Digital Input is not surfaced on this screen. Each DO
-toggle sets its bit in the draft word and publishes the single word (see §5).
-5 s silent expiry if the echo never confirms.
+**Read-only.** The 14 DO channels are **received** from FROM PLC (6563) and
+bit-unpacked for display — the app never writes DO. When MQTT is offline the tab
+becomes a **simulation**: the user types a raw uint16 decimal and the same
+unpacking runs live, to verify the bit calculation.
 
-### Pump Room — Inject Value tab
+### Pump Room — TO PLC tab
 
 | Control | Function (id) | Command | Value |
 |---|---|---|---|
-| PT-001 slider | Pressure Pump 1 (6983) | `SetValue` | mA × 10 (see §6) |
-| PT-002 slider | Pressure Pump 2 (7019) | `SetValue` | mA × 10 (see §6) |
+| PT-001 slider | TO PLC (7193), word `W[0]` | `SetValue` | packed; PT1 = mA × 10 (see §6) |
+| PT-002 slider | TO PLC (7193), word `W[1]` | `SetValue` | packed; PT2 = mA × 10 (see §6) |
+| Pump Activation button | TO PLC (7193), word `W[2]` | `SetValue` | packed; momentary `1` (one-shot) |
 
-Range 4–20 mA, step 0.1, debounced 250 ms. A derived alarm card (low / warning /
-danger) is computed locally from the draft mA thresholds.
+Pressure is **inject-only** — set-points packed into TO PLC `W[0]`/`W[1]`, no
+read-back (persisted locally; tone / bar / derived-alarm read from the slider).
+**Pump Activation** is a momentary command: the button fires one `SetValue` with
+`W[2] = 1`; it is never held or reset to 0 by the app (normal pressure writes send
+`W[2] = 0`). Offline, both just compute the packed value locally (no publish).
 
 ---
 
-## 5. DO bit unpacking (PLC - SIEMENS, id 6563)
+## 5. PLC registers — FROM PLC read (6563) + TO PLC packed write (7193)
 
-**Digital Output only.** Digital Input is not surfaced on this screen. The DO
-word is a dedicated **16-bit Modbus word (uint16)**, re-based to **bit 0** —
-channel 1 → bit 0. No DI area is packed in, so the published value is just the
-DO word itself:
+The PLC is split across two registers (`docs/DO.md`) with **opposite directions** —
+DO is only received, everything the app sends goes to TO PLC:
 
 ```
-SetValue = doWord            // single 16-bit word, bit 0 = LSB
-DO = bits 0..13  (14 outputs, controllable)
-     bits 14..15 spare (kept 0, not rendered)
+FROM PLC (6563)  read-only   1×uint16   W[0] = DO output status  → bit-unpacked
+TO PLC   (7193)  write only  4×uint16   W[0] = PT1 counter (mA×10)  (uint64 packed)
+                                        W[1] = PT2 counter (mA×10)
+                                        W[2] = Pump Activation (momentary 1)
+                                        W[3] = spare (kept 0)
 ```
 
-Helpers live in `src/lib/bit-packed-word.ts` (`unpackChannels`, `getChannelBit`,
-`setChannelBit`). Each word is forced to **uint16** via `toUint16` before any
-shift — bit15 is a flag, not a sign bit, so signed int16 payloads decode
-correctly. The bit map is supplied by the caller (`DO_BIT_MAP` in `pump-room.tsx`,
-mask `DO_WORD_MASK = 0xffff`) so the layout can change without touching the
-helpers. Source of the mapping: [`docs/DO.md`](../DO.md).
+The DO word is re-based to **bit 0** — channel 1 → bit 0, up to bit 13; bits
+14..15 spare. Every TO PLC write publishes a single packed value:
 
-### Digital Outputs — bits 0–13 (controllable)
+```
+SetValue(7193) = W0 + W1·2^16 + W2·2^32     // W3 = 0, so value < 2^48 (JS-safe)
+```
+
+Decoding is a two-layer job — **by words**, then **by bit**:
+
+- **By words** (`splitWords` / `joinWords`, `src/lib/bit-packed-word.ts`): split a
+  register decimal into its `W[0..n]` uint16 words, or join them back. JS bitwise
+  ops are 32-bit, so words at offset ≥32 are placed by division/multiplication
+  (`2**32`), never `<<`/`>>`. `packToPlcCommand` / `unpackToPlcCommand`
+  (`mqtt-topics.ts`) wrap this for the 4-word TO PLC value.
+- **By bit** (`unpackChannels` / `getChannelBit`): unpack a single word into named
+  DO channels. Each word is forced to **uint16** first — bit15 is a flag, not a
+  sign bit. The bit map is caller-supplied (`DO_BIT_MAP` in `pump-room.tsx`, mask
+  `DO_WORD_MASK = 0xffff`).
+
+FROM PLC (6563) is 1 word → by-bit only (receive). TO PLC (7193) is 4 words →
+by-words (send). Source of the mapping: [`docs/DO.md`](../DO.md).
+
+### Digital Outputs — bits 0–13 (received status)
 
 | Bit | Key | Label |
 |---|---|---|
@@ -168,31 +188,87 @@ helpers. Source of the mapping: [`docs/DO.md`](../DO.md).
 | 13 | remoteMode | Remote Mode |
 | 14–15 | — | *spare* |
 
-**Write path:** toggling a DO sets its bit in the draft word (`setChannelBit`,
-masked to `0xffff`) and publishes `SetValue(6563, doWord)`. **Read path:** metrics
-`Adjustable value` on 6563 is rounded, masked to the 16-bit DO word, stored as the
-confirmed word; the draft tracks the echo unless a toggle is still awaiting its
-ack (`isPendingDoRef`).
+**Read path (FROM PLC 6563):** the DO channels are **display-only**. The counter
+value is rounded, masked to uint16, and bit-unpacked into the 14 indicators — the
+app never writes DO. Offline, the value comes from the simulation input instead of
+metrics (`parseWordInput`).
+
+**Write path (TO PLC 7193):** a pressure slider publishes
+`publishToPlc({ pressurePumpNMa })`; the Pump Activation button publishes
+`publishToPlc({ pumpActivation: 1 })` once (momentary). Unchanged words are always
+pulled from the latest draft (`injectDraftRef`) so no word is clobbered, and
+`pumpActivation` defaults to `0` on ordinary writes so the one-shot never sticks
+on. Offline, writes are computed locally (no publish).
+
+### 5.1 Sending a value — the 4-word packing, worked through
+
+Only **TO PLC (7193)** is ever written; FROM PLC (6563) is read-only. The problem
+to solve: an MQTT command carries exactly **one number**…
+
+```json
+{ "id": 7193, "cmd": "SetValue", "value": <one number> }
+```
+
+…but the register is **4 words**. So the four 16-bit words must be folded into one
+integer (the gateway unfolds them back into 4 modbus registers). Think of it as a
+number in "base 65536", with `W[0]` as the least-significant word:
+
+```
+value = W0 + W1·2^16 + W2·2^32 + W3·2^48
+```
+
+**Worked example** — set PT1 = 11.4 mA, PT2 = 8.0 mA, and fire Pump Activation:
+
+| Word | Raw | Meaning | Contribution |
+|---|---|---|---|
+| `W0` | `114` | PT1 11.4 mA × 10 | `114` |
+| `W1` | `80` | PT2 8.0 mA × 10 | `80 × 65536 = 5,242,880` |
+| `W2` | `1` | Pump Activation (momentary) | `1 × 2^32 = 4,294,967,296` |
+| `W3` | `0` | spare | `0` |
+
+→ `value = 4,300,210,290`, published as
+`{"id":7193,"cmd":"SetValue","value":4300210290}`. The gateway splits it back to
+`[114, 80, 1, 0]`. An ordinary pressure write sends `W2 = 0` → `[114, 80, 0, 0]`.
+
+**Two rules that make this safe:**
+
+1. **Multiply, don't shift.** JS bitwise ops (`<<`, `&`, `|`) are 32-bit only, so
+   `W2 << 32` wraps to `W2`. Words at offset ≥32 must be placed with `× 2**32`.
+   That's why `joinWords` / `splitWords` use `Math.floor` + `/` + `*`, not shifts.
+2. **Never clobber the other words.** One `SetValue` overwrites the *whole*
+   register, so every write must carry all 4 words. A control changing one field
+   pulls the rest from the latest draft (`injectDraftRef.current` in
+   `publishToPlc`), and `pumpActivation` defaults to `0`. Otherwise a pressure
+   write would fire Pump Activation, or leave it latched on.
+
+**By words, combined per write** — e.g. a pressure change:
+
+```
+slider → packToPlcCommand (by words → W0 + W1 + W2)
+       → SetValue(7193, packed)
+```
+
+**JS-safe without BigInt.** `4,300,210,290` ≪ `Number.MAX_SAFE_INTEGER`
+(`2^53 ≈ 9.0e15`). As long as `W3` (spare) stays 0, the value is < `2^48`, so a
+plain `number` is exact. If W3 ever carries high bits, switch to `BigInt`.
 
 ---
 
 ## 6. Pressure transmitter mA encoding
 
-The pressure counter register is a Modbus **unsigned integer** — it cannot store
-a fractional mA. To keep the 0.1 mA slider resolution the app encodes:
+Each pressure word (`W[0]` / `W[1]` of the TO PLC value) is an **unsigned integer**
+— it cannot store a fractional mA. To keep the 0.1 mA slider resolution the app
+encodes the set-point before packing (inject-only, so write direction only):
 
 ```
-write:  counter = round(mA × 10)      // 11.4 mA → SetValue 114
-read:   mA = counter / 10             // echo 114 → 11.4 mA
+write:  counter = round(mA × 10)      // 11.4 mA → 114 in W[0]/W[1]
 ```
 
 - Scale constant: `PRESSURE_MA_COUNTER_SCALE = 10` (one knob).
-- Helpers: `pressureMaToCounter` / `pressureCounterToMa` (`src/lib/mqtt-topics.ts`).
-- Ack tolerance ±0.05 mA absorbs rounding.
+- Helper: `pressureMaToCounter` (`src/lib/mqtt-topics.ts`).
 
-> ⚠️ The gateway register type has flip-flopped (uint / double). Always confirm
-> the real echo scale with the probe (§8) before trusting this on a live gateway.
-> If echo returns `1140` → scale should be `100`; if `11` → resolution is 1.
+> ⚠️ Confirm the PLC interprets `W[0]/W[1]` as mA × 10 with the probe (§8) before
+> trusting this on a live gateway — if it expects raw mA, drop the scale to 1.
 
 ---
 
@@ -200,12 +276,12 @@ read:   mA = counter / 10             // echo 114 → 11.4 mA
 
 | Concern | Rule |
 |---|---|
-| Draft vs confirmed | Slider/toggle follows local draft; chip/tone/bar follow the gateway echo. |
-| Counter ack | Pending clears when metrics echo matches expected (temperature: exact int; pressure: ±0.05 mA). |
+| DO status (FROM PLC) | Receive-only — bit-unpacked from 6563 metrics for display; the app never writes DO, so nothing to reconcile. |
+| Pressure (inject-only) | No echo/reconcile — the slider value is authoritative and persisted locally. |
+| Pump Activation | Momentary one-shot — publishes `W[2]=1` once; no ack, next write sends `W[2]=0`. |
+| Counter ack (accommodation) | Pending clears when metrics echo matches expected (temperature: exact int). |
 | Alarm ack | Pending clears when metrics arrive after the send, or after a 5 s silent guard. |
-| DO word ack | Pending clears on the next metrics after the send, or after 5 s. |
-| Disconnect | Pending commands are dropped; controls disable until reconnect. |
-| Latency | On ack, a sample (`gatewayOtCommand` → `gatewayMetrics`) is recorded. |
+| Offline → simulation | With MQTT down the pump room computes pack/unpack locally (FROM PLC from a typed value, TO PLC shown but not published). |
 
 ---
 
@@ -240,6 +316,6 @@ Example echo line that settles the encoding question:
 | `src/lib/bit-packed-word.ts` | Generic uint16 bit pack/unpack helpers. |
 | `src/providers/mqtt-provider.tsx` | Broker connection, subscribe, publish, metrics merge/cache, latency. |
 | `src/app/stations/accommodation-room.tsx` | Smoke / temperature / alarm inject + zone heating read-out. |
-| `src/app/stations/pump-room.tsx` | DI/DO word (PLC tab) + pressure inject (Inject tab), bit maps. |
+| `src/app/stations/pump-room.tsx` | DO read (6563) + packed TO PLC write (7193) for DO & pressure, bit maps. |
 | `src/lib/accommodation-room-demo.ts`, `pump-room-demo.ts` | Draft defaults + local persistence. |
 | `scripts/mqtt-probe.mjs` | Live gateway probe / echo dump. |

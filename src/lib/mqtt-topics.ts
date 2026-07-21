@@ -1,4 +1,5 @@
 import { formatAccommodationTemperature } from '@/lib/accommodation-room-demo';
+import { joinWords, splitWords } from '@/lib/bit-packed-word';
 
 export type MqttTopicDirection = 'publish' | 'subscribe' | 'duplex';
 export type MqttTopicQos = 0 | 1 | 2;
@@ -162,24 +163,70 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
     },
   },
   fireFightingRoom: {
-    // Device 6563 (PLC - SIEMENS) covers both DI and DO under one device entry
-    // in gatewayMetrics. It exposes (at least) two signals — one for the DI
-    // word and one for the DO word. Signal index/name TBD by engineering.
-    // The same id (6563) is used as the OT command target for SetValue.
-    doWord: {
+    // Two separate PLC registers (see docs/DO.md):
+    //  • FROM PLC - SIEMENS (6563): READ-only. One uint16 word, W[0], carrying
+    //    the DO output status (14 channels) the PLC applied. Bit-unpacked on read.
+    //  • TO PLC - SIEMENS (7193): the WRITE target. A packed uint64 (4×uint16):
+    //    W[0]=PT1 counter, W[1]=PT2 counter, W[2]=Pump Activation (momentary),
+    //    W[3]=spare. DO is NOT written — it is received on FROM PLC only.
+    fromPlc: {
       deviceId: 6563,
+    },
+    toPlc: {
+      deviceId: 7193,
     },
   },
   pumpRoom: {
-    // Pressure Transmitter counters (Carlo Gavazzi "Counter" functions).
-    // Injected in the 4–20 mA signal domain via SetValue on cmd/ot and echoed
-    // back on gatewayMetrics — same mapping rules as the accommodation room.
-    counterIds: {
-      pressurePump1: 6983, // Pressure Transmitter - Pump 1 (PT-001)
-      pressurePump2: 7019, // Pressure Transmitter - Pump 2 (PT-002)
-    },
+    // Pressure Transmitters PT-001 / PT-002 are INJECT-ONLY: their set-points are
+    // packed into the TO PLC word (7193, W[0] / W[1]) — see packToPlcCommand. The
+    // app does not read them back, so no per-transmitter read ids live here.
+    // Devices 6983 / 7019 stay documented in docs/device-id-registry.md for probing.
   },
 } as const;
+
+// TO PLC - SIEMENS (7193) is a packed uint64 exposed as one counter value.
+// Word order (W[0] = least-significant word), per docs/DO.md:
+export const TO_PLC_WORD_INDEX = {
+  pressurePump1: 0, // W[0] — PT1 set-point counter (mA × 10)
+  pressurePump2: 1, // W[1] — PT2 set-point counter (mA × 10)
+  pumpActivation: 2, // W[2] — Pump Activation, momentary (1 = fire, else 0)
+  spare: 3, // W[3] — reserved, always 0
+} as const;
+
+export const TO_PLC_WORD_COUNT = 4;
+
+// Pack the two pressure counters + the momentary pump-activation word into the
+// single uint64 value the TO PLC counter expects — the "by words" layer (see
+// splitWords/joinWords). Pump Activation is a one-shot command: pass 1 only on
+// the publish that fires it, otherwise 0. The spare word stays 0, so the result
+// is < 2**48, safely inside Number.MAX_SAFE_INTEGER (no BigInt needed).
+export function packToPlcCommand({
+  pressurePump1Counter,
+  pressurePump2Counter,
+  pumpActivation = 0,
+}: {
+  pressurePump1Counter: number;
+  pressurePump2Counter: number;
+  pumpActivation?: number;
+}): number {
+  const words = new Array(TO_PLC_WORD_COUNT).fill(0);
+  words[TO_PLC_WORD_INDEX.pressurePump1] = pressurePump1Counter;
+  words[TO_PLC_WORD_INDEX.pressurePump2] = pressurePump2Counter;
+  words[TO_PLC_WORD_INDEX.pumpActivation] = pumpActivation;
+  return joinWords(words);
+}
+
+// Inverse of packToPlcCommand: split a TO PLC decimal back into its words. Used
+// by the simulation view to verify the "by words" packing calculation.
+export function unpackToPlcCommand(value: number) {
+  const words = splitWords(value, TO_PLC_WORD_COUNT);
+  return {
+    words,
+    pressurePump1Counter: words[TO_PLC_WORD_INDEX.pressurePump1],
+    pressurePump2Counter: words[TO_PLC_WORD_INDEX.pressurePump2],
+    pumpActivation: words[TO_PLC_WORD_INDEX.pumpActivation],
+  };
+}
 
 const VALUE_COMMANDS = ['Increase', 'Decrease', 'SetValue'] as const;
 const COUNTER_VALUE_SIGNAL_NAMES = ['Total value', 'Adjustable value', 'Input value'] as const;
@@ -527,30 +574,14 @@ export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPay
   };
 }
 
-// The pressure counter register is a Modbus unsigned integer, so a fractional
-// mA cannot be stored directly. Encode mA as (mA × 10) on write and divide it
-// back out on read — keeping the 0.1 mA slider resolution. Both directions live
-// here so callers never round-trip mA through the raw counter by hand.
+// A pressure set-point word is a Modbus unsigned integer, so a fractional mA
+// cannot be stored directly. Encode mA as (mA × 10) before packing it into the
+// TO PLC word (W[1] / W[2]); the 0.1 mA slider resolution survives the round
+// trip. Inject-only — there is no read-back to decode.
 export const PRESSURE_MA_COUNTER_SCALE = 10;
 
 export function pressureMaToCounter(mA: number) {
   return Math.round(mA * PRESSURE_MA_COUNTER_SCALE);
-}
-
-export function pressureCounterToMa(counter: number) {
-  return counter / PRESSURE_MA_COUNTER_SCALE;
-}
-
-export function getPumpRoomPressureState(payload: CarloGavazziMetricsPayload) {
-  const { pressurePump1, pressurePump2 } = CARLO_GAVAZZI_GATEWAY_CONFIG.pumpRoom.counterIds;
-  const pump1Counter = getCarloGavazziCounterNumericValue(payload, pressurePump1);
-  const pump2Counter = getCarloGavazziCounterNumericValue(payload, pressurePump2);
-
-  return {
-    // Counter echo decoded back into the injected mA signal domain.
-    pressurePump1Ma: pump1Counter === null ? null : pressureCounterToMa(pump1Counter),
-    pressurePump2Ma: pump2Counter === null ? null : pressureCounterToMa(pump2Counter),
-  };
 }
 
 function getBinarySignalLabel(value: number | null) {

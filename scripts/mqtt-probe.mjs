@@ -65,12 +65,21 @@ const PROBES = [
     testValue: 1,
   },
   {
-    key: 'plcDoWord',
-    label: 'PLC - SIEMENS (DI/DO word)',
+    key: 'plcFromDo',
+    label: 'FROM PLC - SIEMENS (DO status, read-only)',
     deviceId: 6563,
+    write: false, // 6563 is the PLC's DO output status — read-only, never written
+    build: () => null, // observe only
+  },
+  {
+    key: 'plcToPlc',
+    label: 'TO PLC - SIEMENS (packed PT1 + PT2 + Pump Activation)',
+    deviceId: 7193,
     write: true,
-    build: (v) => ({ id: 6563, cmd: 'SetValue', value: v }),
-    testValue: 5,
+    // Packed uint64: W0=PT1 counter, W1=PT2 counter, W2=Pump Activation, W3=spare.
+    // Test value: PT1=123 (12.3 mA×10), PT2=87 (8.7 mA×10), Pump Activation=1.
+    build: (v) => ({ id: 7193, cmd: 'SetValue', value: v }),
+    testValue: 123 + 87 * 2 ** 16 + 1 * 2 ** 32,
   },
   {
     key: 'alarm',
