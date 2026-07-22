@@ -112,17 +112,18 @@ type in [`MQTT.md`](./MQTT.md).
 
 ### Pump Room — FROM PLC tab (`src/app/stations/pump-room.tsx`)
 
-**Read-only.** The 14 DO channels are **received** from FROM PLC (6563) and
-bit-unpacked for display — the app never writes DO. When MQTT is offline the tab
-becomes a **simulation**: the user types a raw uint16 decimal and the same
-unpacking runs live, to verify the bit calculation.
+**Read-only when connected.** The 14 DO channels are **received** from FROM PLC
+(6563) and bit-unpacked for display — the app never writes DO. When MQTT is
+offline the tab becomes a **simulation**: each channel is **tap-to-toggle**
+(ON/OFF), and the packed uint16 decimal + its bit string recompute live — so the
+calculation can be cross-checked with the PLC engineer without any typing.
 
 ### Pump Room — TO PLC tab
 
 | Control | Function (id) | Command | Value |
 |---|---|---|---|
-| PT-001 slider | TO PLC (7193), word `W[0]` | `SetValue` | packed; PT1 = mA × 10 (see §6) |
-| PT-002 slider | TO PLC (7193), word `W[1]` | `SetValue` | packed; PT2 = mA × 10 (see §6) |
+| PT-001 slider | TO PLC (7193), word `W[0]` | `SetValue` | packed; PT1 = bar × 10 (see §6) |
+| PT-002 slider | TO PLC (7193), word `W[1]` | `SetValue` | packed; PT2 = bar × 10 (see §6) |
 | Pump Activation button | TO PLC (7193), word `W[2]` | `SetValue` | packed; momentary `1` (one-shot) |
 
 Pressure is **inject-only** — set-points packed into TO PLC `W[0]`/`W[1]`, no
@@ -140,8 +141,8 @@ DO is only received, everything the app sends goes to TO PLC:
 
 ```
 FROM PLC (6563)  read-only   1×uint16   W[0] = DO output status  → bit-unpacked
-TO PLC   (7193)  write only  4×uint16   W[0] = PT1 counter (mA×10)  (uint64 packed)
-                                        W[1] = PT2 counter (mA×10)
+TO PLC   (7193)  write only  4×uint16   W[0] = PT1 counter (bar×10)  (uint64 packed)
+                                        W[1] = PT2 counter (bar×10)
                                         W[2] = Pump Activation (momentary 1)
                                         W[3] = spare (kept 0)
 ```
@@ -190,8 +191,8 @@ by-words (send). Source of the mapping: [`docs/DO.md`](../DO.md).
 
 **Read path (FROM PLC 6563):** the DO channels are **display-only**. The counter
 value is rounded, masked to uint16, and bit-unpacked into the 14 indicators — the
-app never writes DO. Offline, the value comes from the simulation input instead of
-metrics (`parseWordInput`).
+app never writes DO. Offline, the word is built by tapping channels on/off
+(`toggleDoChannel` → `setChannelBit`) instead of coming from metrics.
 
 **Write path (TO PLC 7193):** a pressure slider publishes
 `publishToPlc({ pressurePumpNMa })`; the Pump Activation button publishes
@@ -217,18 +218,19 @@ number in "base 65536", with `W[0]` as the least-significant word:
 value = W0 + W1·2^16 + W2·2^32 + W3·2^48
 ```
 
-**Worked example** — set PT1 = 11.4 mA, PT2 = 8.0 mA, and fire Pump Activation:
+**Worked example** — set PT1 = 11.4 mA (7.4 bar), PT2 = 8.0 mA (4.0 bar), and fire
+Pump Activation:
 
 | Word | Raw | Meaning | Contribution |
 |---|---|---|---|
-| `W0` | `114` | PT1 11.4 mA × 10 | `114` |
-| `W1` | `80` | PT2 8.0 mA × 10 | `80 × 65536 = 5,242,880` |
+| `W0` | `74` | PT1 7.4 bar × 10 | `74` |
+| `W1` | `40` | PT2 4.0 bar × 10 | `40 × 65536 = 2,621,440` |
 | `W2` | `1` | Pump Activation (momentary) | `1 × 2^32 = 4,294,967,296` |
 | `W3` | `0` | spare | `0` |
 
-→ `value = 4,300,210,290`, published as
-`{"id":7193,"cmd":"SetValue","value":4300210290}`. The gateway splits it back to
-`[114, 80, 1, 0]`. An ordinary pressure write sends `W2 = 0` → `[114, 80, 0, 0]`.
+→ `value = 4,297,588,810`, published as
+`{"id":7193,"cmd":"SetValue","value":4297588810}`. The gateway splits it back to
+`[74, 40, 1, 0]`. An ordinary pressure write sends `W2 = 0` → `[74, 40, 0, 0]`.
 
 **Two rules that make this safe:**
 
@@ -254,21 +256,24 @@ plain `number` is exact. If W3 ever carries high bits, switch to `BigInt`.
 
 ---
 
-## 6. Pressure transmitter mA encoding
+## 6. Pressure transmitter bar encoding
 
-Each pressure word (`W[0]` / `W[1]` of the TO PLC value) is an **unsigned integer**
-— it cannot store a fractional mA. To keep the 0.1 mA slider resolution the app
-encodes the set-point before packing (inject-only, so write direction only):
+The PLC expects the set-point in the engineering unit **bar**, not the raw 4–20 mA
+loop current. The transmitter maps `4 mA → 0 bar`, `20 mA → 16 bar`, so
+`bar = mA − 4`. The UI still shows the mA slider unchanged — only the value packed
+into `W[0]` / `W[1]` changed. Each word is an **unsigned integer** and cannot store
+a fractional bar, so the app encodes it before packing (inject-only, write only):
 
 ```
-write:  counter = round(mA × 10)      // 11.4 mA → 114 in W[0]/W[1]
+write:  counter = round((mA − 4) × 10)   // 11.4 mA → 7.4 bar → 74 in W[0]/W[1]
 ```
 
-- Scale constant: `PRESSURE_MA_COUNTER_SCALE = 10` (one knob).
-- Helper: `pressureMaToCounter` (`src/lib/mqtt-topics.ts`).
+- Scale constant: `PRESSURE_COUNTER_SCALE = 10`; zero point `PRESSURE_MA_ZERO_BAR = 4`.
+- Helpers: `pressureMaToBar` → `pressureBarToCounter` (composed as
+  `pressureMaToCounter`) in `src/lib/mqtt-topics.ts`.
 
-> ⚠️ Confirm the PLC interprets `W[0]/W[1]` as mA × 10 with the probe (§8) before
-> trusting this on a live gateway — if it expects raw mA, drop the scale to 1.
+> ⚠️ Confirm the PLC interprets `W[0]/W[1]` as bar × 10 with the probe (§9) before
+> trusting this on a live gateway — if it expects raw bar, drop the scale to 1.
 
 ---
 
@@ -281,11 +286,79 @@ write:  counter = round(mA × 10)      // 11.4 mA → 114 in W[0]/W[1]
 | Pump Activation | Momentary one-shot — publishes `W[2]=1` once; no ack, next write sends `W[2]=0`. |
 | Counter ack (accommodation) | Pending clears when metrics echo matches expected (temperature: exact int). |
 | Alarm ack | Pending clears when metrics arrive after the send, or after a 5 s silent guard. |
-| Offline → simulation | With MQTT down the pump room computes pack/unpack locally (FROM PLC from a typed value, TO PLC shown but not published). |
+| Offline → simulation | With MQTT down the pump room computes pack/unpack locally (FROM PLC word built by tapping channels on/off, TO PLC shown but not published). |
 
 ---
 
-## 8. Probing the live gateway
+## 8. Dashboard client — FROM PLC display + TO PLC read-back
+
+The custom SCADA dashboard is a **second MQTT client** on the same gateway. It
+subscribes to the one `…/metrics` topic and therefore receives **both** PLC
+registers in every snapshot — no separate feed is needed:
+
+| Register | id | Dashboard use | Direction |
+|---|---|---|---|
+| FROM PLC | 6563 | DO status — live plant state, bit-unpacked to 14 indicators | receive |
+| TO PLC | 7193 | Read-back of the last command — unpack the 4 words to verify PT1 / PT2 / Pump Activation | receive (+ write) |
+
+> The dashboard is also the **authoritative writer of Pump Activation** — per
+> [`docs/DO.md`](../DO.md), `W[2]` is sent from the dashboard; the mobile app's
+> button mirrors it for simulation. Any client writing 7193 must carry all 4 words
+> (§5.1 clobber rule).
+
+### 8.1 FROM PLC (6563) → DO indicators
+
+Read the counter numeric value (`Total value`), `Math.round`, mask to uint16, then
+bit-unpack with the shared `DO_BIT_MAP`. Suggested operator grouping:
+
+| Group | Bits | Channels | Interpretation |
+|---|---|---|---|
+| Pumps | 0, 1, 11 | Pump A / B / C Running | running feedback (`1` = running) |
+| SV1 | 2, 3 | SV1 Opened / Closed | limit feedback — `10` open, `01` closed, `00` mid-travel, `11` sensor fault |
+| SV2 | 4, 5 | SV2 Opened / Closed | same convention as SV1 |
+| Zones | 6, 7 | Local / Remote Zone Activation | which zone triggered |
+| Fire / tank | 8, 9, 10 | FGS Confirmed Fire, Level Tank High / Low | plant safety inputs |
+| Mode | 12, 13 | Local / Remote Mode | mutually exclusive — `01`/`10` normal, `00`/`11` mode fault |
+| — | 14, 15 | spare | ignore |
+
+```
+word = round(counter(6563)) & 0xFFFF
+DO   = unpackChannels([word], DO_BIT_MAP)   // { pumpARunning: bool, … }
+```
+
+### 8.2 TO PLC (7193) → read-back / verification
+
+The same snapshot also carries the last value written to 7193 (the app treats it as
+write-only, but the gateway still echoes it as a Counter). Unpack it back into its
+4 words to show the operator the currently-commanded set-points — regardless of
+which client issued them:
+
+```
+words   = splitWords(value(7193), 4)          // [W0, W1, W2, W3]
+PT1_bar = words[0] / 10   → PT1_mA = PT1_bar + 4
+PT2_bar = words[1] / 10   → PT2_mA = PT2_bar + 4
+pumpAct = words[2]                            // 1 = activation pulse in flight
+```
+
+- PT1 / PT2 decode is the inverse of §6 (`counter ÷ 10 = bar`, `+ 4 = mA`).
+- `W[2]` reads `1` only while an activation pulse is latched, else `0`.
+- `W[3]` is spare (`0`).
+
+Worked example (inverse of §5.1): read-back `4,297,588,810` → `splitWords` →
+`[74, 40, 1, 0]` → PT1 `7.4 bar` (11.4 mA), PT2 `4.0 bar` (8.0 mA), Pump Activation
+`ON`, spare `0`.
+
+### 8.3 Two writers, one register — staying in sync
+
+Both the dashboard and the mobile app write 7193, so each must **re-hydrate its own
+draft from the TO PLC read-back** (§8.2) on connect and on every relevant metrics
+snapshot. Otherwise a pressure write from one client — which re-sends all 4 words
+from its local draft — would overwrite the other's set-point. The read-back is the
+single re-sync point; there is no separate handshake.
+
+---
+
+## 9. Probing the live gateway
 
 `scripts/mqtt-probe.mjs` sends a command to each function and dumps the raw
 echo (value + JS type + signal `type`/`unit`) so you can confirm scale/format:
@@ -308,7 +381,7 @@ Example echo line that settles the encoding question:
 
 ---
 
-## 9. Source map
+## 10. Source map
 
 | File | Responsibility |
 |---|---|

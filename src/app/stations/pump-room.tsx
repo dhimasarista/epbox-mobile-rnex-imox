@@ -2,12 +2,14 @@ import { Slider } from '@expo/ui/community/slider';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
-  type BitChannelMap,
+  getChannelBit,
+  setChannelBit,
   unpackChannels,
+  type BitChannelMap,
 } from '@/lib/bit-packed-word';
 import {
   buildCarloGavazziOtCommand,
@@ -38,8 +40,9 @@ type DerivedAlarm = { level: DerivedAlarmLevel; conditions: string[] };
 // The PLC reports its DO output as one uint16 word (bit 0 = LSB). Per docs/DO.md
 // bits 0..13 are functional channels, bits 14..15 spare. The app RECEIVES and
 // bit-unpacks this word for display — it never writes DO. When MQTT is offline
-// the screen switches to simulation: the user types a raw decimal and watches the
-// same unpacking, to verify the bit calculation.
+// the screen switches to simulation: each channel becomes a tappable ON/OFF, and
+// the decimal word + bits recompute live — so the calculation can be checked
+// against the PLC engineer's, no typing required.
 
 const DO_CHANNELS = [
   { key: 'pumpARunning',         label: 'Pump A Running' },
@@ -79,10 +82,6 @@ const DO_BIT_MAP: BitChannelMap<DoKey> = {
 
 // Full 16-bit DO word (bits 14 & 15 spare).
 const DO_WORD_MASK = 0xffff;
-
-function parseWordInput(text: string) {
-  return (Number.parseInt(text, 10) || 0) & DO_WORD_MASK;
-}
 
 // ─── Inject Value Constants (4–20 mA signal) ────────────────────────────────
 
@@ -201,36 +200,49 @@ function GatewayWordDisplay({ doWord, simulation }: { doWord: number; simulation
   );
 }
 
-function SimFromPlcInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <View style={s.simInputCard}>
-      <Text style={s.simInputLabel}>Simulasi FROM_PLC — nilai desimal (0–65535)</Text>
-      <TextInput
-        style={s.simInput}
-        value={value}
-        onChangeText={(t) => onChange(t.replace(/[^0-9]/g, '').slice(0, 5))}
-        keyboardType="number-pad"
-        placeholder="0"
-        placeholderTextColor={AppColors.textSubtle}
-        accessibilityLabel="Simulasi nilai FROM PLC"
-      />
-    </View>
-  );
-}
-
-function DoStatusRow({ ch, value }: { ch: (typeof DO_CHANNELS)[number]; value: boolean }) {
+function DoStatusRow({
+  ch,
+  value,
+  bitIndex,
+  simulation,
+  onToggle,
+}: {
+  ch: (typeof DO_CHANNELS)[number];
+  value: boolean;
+  bitIndex: number;
+  simulation: boolean;
+  onToggle?: () => void;
+}) {
   const activeColor = AppColors.success;
-  return (
-    <View style={[s.doRow, value && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' }]}>
+  const body = (
+    <>
       <View style={s.doLeft}>
         <View style={[s.doIndicator, { backgroundColor: value ? activeColor : AppColors.border }]} />
         <Text style={s.diLabel} numberOfLines={1}>{ch.label}</Text>
+        <Text style={s.doBitTag}>b{bitIndex}</Text>
       </View>
       <View style={[s.doStatusPill, value && { backgroundColor: activeColor, borderColor: activeColor }]}>
         <Text style={[s.doStatusPillText, value && s.doStatusPillTextOn]}>{value ? 'ON' : 'OFF'}</Text>
       </View>
-    </View>
+    </>
   );
+  const rowStyle = [s.doRow, value && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' }];
+
+  // Simulation: whole row is a toggle (tap to flip the bit). Connected: read-only.
+  if (simulation && onToggle) {
+    return (
+      <TouchableOpacity
+        style={rowStyle}
+        onPress={onToggle}
+        activeOpacity={0.7}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: value }}
+        accessibilityLabel={`${ch.label} (bit ${bitIndex})`}>
+        {body}
+      </TouchableOpacity>
+    );
+  }
+  return <View style={rowStyle}>{body}</View>;
 }
 
 // ─── TO PLC tab sub-components ───────────────────────────────────────────────
@@ -246,15 +258,26 @@ function ToPlcWordDisplay({
   pumpActivation: number;
   packed: number;
 }) {
+  // Show every one of the 4 words so the packed uint64 is fully transparent.
+  const words = [
+    { label: 'W0 · PT1', value: pt1Counter, active: pt1Counter > 0 },
+    { label: 'W1 · PT2', value: pt2Counter, active: pt2Counter > 0 },
+    { label: 'W2 · Pump Act', value: pumpActivation, active: pumpActivation > 0 },
+    { label: 'W3 · spare', value: 0, active: false },
+  ];
   return (
-    <View style={s.ioCountRow}>
+    <View style={s.toPlcBlock}>
       <View style={s.ioCountCard}>
         <Text style={s.ioCountValue} numberOfLines={1} adjustsFontSizeToFit>{packed}</Text>
         <Text style={s.ioCountLabel}>TO_PLC uint64 (to send)</Text>
       </View>
-      <View style={s.ioCountCard}>
-        <Text style={[s.ioCountValue, s.ioCountValueBin]}>{`${pt1Counter} · ${pt2Counter} · ${pumpActivation}`}</Text>
-        <Text style={s.ioCountLabel}>W0 · W1 · W2</Text>
+      <View style={s.wordGrid}>
+        {words.map((w) => (
+          <View key={w.label} style={[s.wordCell, w.active && s.wordCellActive]}>
+            <Text style={[s.wordValue, w.active && s.wordValueActive]}>{w.value}</Text>
+            <Text style={s.wordLabel}>{w.label}</Text>
+          </View>
+        ))}
       </View>
     </View>
   );
@@ -361,7 +384,7 @@ function PumpActivationButton({ simulation, onFire }: { simulation: boolean; onF
       accessibilityLabel="Pump Activation">
       <Feather name="zap" size={16} color={AppColors.textInverse} />
       <Text style={s.pumpActBtnText}>
-        {simulation ? 'Simulasi Pump Activation' : 'Kirim Pump Activation'}
+        {simulation ? 'Pump Activation' : 'Kirim Pump Activation'}
       </Text>
     </TouchableOpacity>
   );
@@ -396,11 +419,16 @@ export default function PumpRoom() {
   // When MQTT is offline, the whole screen runs as a local pack/unpack simulator.
   const isSimulation = status !== 'connected';
 
-  // ── FROM PLC tab state (DO status, read-only) ──
+  // ── FROM PLC tab state (DO status) ──
   const [lastDoWord, setLastDoWord] = useState(0);   // received from FROM PLC (6563)
-  const [simDoInput, setSimDoInput] = useState('0'); // simulation: raw decimal typed by user
-  const doWord = isSimulation ? parseWordInput(simDoInput) : lastDoWord;
+  const [simDoWord, setSimDoWord] = useState(0);     // simulation: built by tapping channels
+  const doWord = isSimulation ? simDoWord : lastDoWord;
   const doState = unpackChannels([doWord], DO_BIT_MAP);
+
+  // Simulation: tap a channel to flip its bit; decimal + bits recompute from the word.
+  const toggleDoChannel = useCallback((key: DoKey) => {
+    setSimDoWord((prev) => setChannelBit([prev], DO_BIT_MAP, key, !getChannelBit([prev], DO_BIT_MAP, key))[0]);
+  }, []);
 
   // ── TO PLC tab state (inject PT-001/PT-002 + momentary pump activation) ──
   const [injectDraft, setInjectDraft] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
@@ -414,15 +442,26 @@ export default function PumpRoom() {
   const [injectFlash, setInjectFlash] = useState<string | null>(null);
   const injectFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Live TO PLC preview (pumpActivation = 0; it is momentary, only 1 on fire).
+  // Pump Activation is momentary — normally W[2] = 0. When fired we pulse it to 1
+  // for ~2 s so the packed word / W-grid transparently shows what was sent.
+  const [pumpActPulse, setPumpActPulse] = useState(0);
+  const pumpActPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Live TO PLC preview. W[2] follows the momentary pulse so the grid stays honest.
   const pt1Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump1));
   const pt2Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump2));
-  const toPlcPacked = packInputs(injectDraft, 0);
+  const toPlcPacked = packInputs(injectDraft, pumpActPulse);
 
   const flashInject = useCallback((message: string) => {
     setInjectFlash(message);
     if (injectFlashTimeoutRef.current) clearTimeout(injectFlashTimeoutRef.current);
     injectFlashTimeoutRef.current = setTimeout(() => setInjectFlash(null), 2_000);
+  }, []);
+
+  const pulsePumpActivation = useCallback(() => {
+    setPumpActPulse(1);
+    if (pumpActPulseTimeoutRef.current) clearTimeout(pumpActPulseTimeoutRef.current);
+    pumpActPulseTimeoutRef.current = setTimeout(() => setPumpActPulse(0), 2_000);
   }, []);
 
   // ── FROM PLC: sync metrics → DO word (only while connected) ──
@@ -477,6 +516,7 @@ export default function PumpRoom() {
         if (timer) clearTimeout(timer);
       });
       if (injectFlashTimeoutRef.current) clearTimeout(injectFlashTimeoutRef.current);
+      if (pumpActPulseTimeoutRef.current) clearTimeout(pumpActPulseTimeoutRef.current);
     };
   }, []);
 
@@ -509,8 +549,10 @@ export default function PumpRoom() {
     [flashInject, publishToPlc, status]
   );
 
-  // Momentary: fire once with W[2] = 1. Offline it just shows the packed value.
+  // Momentary: fire once with W[2] = 1. The pulse lights up W2 in the grid either
+  // way; offline it just shows the packed value instead of publishing.
   const firePumpActivation = useCallback(() => {
+    pulsePumpActivation();
     if (status !== 'connected') {
       flashInject(`SIM — Pump Activation → ${packInputs(injectDraftRef.current, 1)}`);
       return;
@@ -523,10 +565,10 @@ export default function PumpRoom() {
       .catch((err: unknown) => {
         setLastCommandError(err instanceof Error ? err.message : 'Pump Activation failed.');
       });
-  }, [flashInject, publishToPlc, status]);
+  }, [flashInject, publishToPlc, pulsePumpActivation, status]);
 
   const fromPlcStatusHint = useMemo(() => {
-    if (isSimulation) return 'Mode simulasi — MQTT offline. Ketik nilai untuk uji bit unpacking.';
+    if (isSimulation) return 'Mode simulasi — MQTT offline. Tekan channel untuk ON/OFF; desimal & bit terhitung otomatis.';
     return null;
   }, [isSimulation]);
 
@@ -548,21 +590,29 @@ export default function PumpRoom() {
           <>
             <GatewayWordDisplay doWord={doWord} simulation={isSimulation} />
 
-            {isSimulation ? <SimFromPlcInput value={simDoInput} onChange={setSimDoInput} /> : null}
             {fromPlcStatusHint ? <Text style={s.statusHint}>{fromPlcStatusHint}</Text> : null}
 
-            {/* DO status (received, read-only) */}
+            {/* DO status — received & read-only when connected; tap-to-toggle in simulation */}
             <View style={s.sectionBlock}>
               <View style={s.sectionHeader}>
                 <View style={s.sectionLabelRow}>
                   <View style={[s.sectionDot, { backgroundColor: AppColors.primary }]} />
                   <Text style={s.sectionTitle}>Digital Output</Text>
                 </View>
-                <Text style={[s.sectionBadge, s.sectionBadgeDo]}>Status · read-only</Text>
+                <Text style={[s.sectionBadge, s.sectionBadgeDo]}>
+                  {isSimulation ? 'Simulasi · tekan ON/OFF' : 'Status · read-only'}
+                </Text>
               </View>
               <View style={s.doStack}>
                 {DO_CHANNELS.map((ch) => (
-                  <DoStatusRow key={ch.key} ch={ch} value={doState[ch.key]} />
+                  <DoStatusRow
+                    key={ch.key}
+                    ch={ch}
+                    value={doState[ch.key]}
+                    bitIndex={DO_BIT_MAP[ch.key].bitIndex}
+                    simulation={isSimulation}
+                    onToggle={() => toggleDoChannel(ch.key)}
+                  />
                 ))}
               </View>
             </View>
@@ -574,9 +624,11 @@ export default function PumpRoom() {
             <ToPlcWordDisplay
               pt1Counter={pt1Counter}
               pt2Counter={pt2Counter}
-              pumpActivation={0}
+              pumpActivation={pumpActPulse}
               packed={toPlcPacked}
             />
+            {/* Pump Activation — momentary command (W2) */}
+            <PumpActivationButton simulation={isSimulation} onFire={firePumpActivation} />
 
             {/* PT-001 / PT-002 inject in 4–20 mA (W0 / W1) */}
             <View style={stationStyles.sectionCard}>
@@ -590,8 +642,7 @@ export default function PumpRoom() {
               ))}
             </View>
 
-            {/* Pump Activation — momentary command (W2) */}
-            <PumpActivationButton simulation={isSimulation} onFire={firePumpActivation} />
+            
 
             {/* Derived alarm */}
             <View style={stationStyles.summaryCard}>
@@ -670,27 +721,23 @@ const s = StyleSheet.create({
   ioCountValueBin: { fontSize: 14, letterSpacing: 1.5, fontVariant: ['tabular-nums'] },
   ioCountLabel: { fontSize: 11, fontWeight: '700', color: AppColors.textMuted },
 
-  simInputCard: {
+  toPlcBlock: { gap: AppSpacing.md },
+  wordGrid: { flexDirection: 'row', gap: AppSpacing.sm },
+  wordCell: {
+    flex: 1,
     backgroundColor: AppColors.surface,
     borderRadius: AppRadii.lg,
     borderWidth: 1,
     borderColor: AppColors.border,
-    padding: AppSpacing.md,
-    gap: AppSpacing.sm,
-  },
-  simInputLabel: { fontSize: 12, fontWeight: '700', color: AppColors.textMuted },
-  simInput: {
-    borderWidth: 1,
-    borderColor: AppColors.border,
-    borderRadius: AppRadii.md,
-    paddingHorizontal: AppSpacing.md,
     paddingVertical: AppSpacing.sm,
-    fontSize: 18,
-    fontWeight: '800',
-    color: AppColors.text,
-    fontVariant: ['tabular-nums'],
-    backgroundColor: AppColors.surfaceMuted,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    gap: 4,
   },
+  wordCellActive: { backgroundColor: AppColors.surfaceAccent, borderColor: '#F5D3C5' },
+  wordValue: { fontSize: 16, fontWeight: '900', color: AppColors.text, fontVariant: ['tabular-nums'] },
+  wordValueActive: { color: AppColors.primary },
+  wordLabel: { fontSize: 9, fontWeight: '700', color: AppColors.textSubtle, textAlign: 'center' },
 
   sectionBlock: { gap: AppSpacing.sm },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -705,7 +752,13 @@ const s = StyleSheet.create({
   },
   sectionBadgeDo: { color: AppColors.primary, backgroundColor: AppColors.surfaceAccent, borderColor: '#F5D3C5' },
 
-  diLabel: { fontSize: 13, fontWeight: '700', color: AppColors.text },
+  diLabel: { fontSize: 13, fontWeight: '700', color: AppColors.text, flexShrink: 1 },
+  doBitTag: {
+    fontSize: 10, fontWeight: '800', color: AppColors.textSubtle,
+    backgroundColor: AppColors.surfaceMuted, borderRadius: AppRadii.sm,
+    paddingHorizontal: 6, paddingVertical: 2, overflow: 'hidden',
+    fontVariant: ['tabular-nums'], flexShrink: 0,
+  },
 
   doStack: { gap: AppSpacing.sm },
   doRow: {
@@ -730,11 +783,11 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     gap: AppSpacing.sm,
     backgroundColor: AppColors.primary,
-    borderRadius: AppRadii.lg,
+    borderRadius: AppRadii.sm,
     paddingVertical: AppSpacing.md,
     paddingHorizontal: AppSpacing.lg,
   },
-  pumpActBtnSim: { backgroundColor: AppColors.textMuted },
+  pumpActBtnSim: { backgroundColor: AppColors.error },
   pumpActBtnText: { fontSize: 14, fontWeight: '800', color: AppColors.textInverse, letterSpacing: 0.3 },
 
   derivedAlarmCard: {

@@ -77,7 +77,8 @@ const PROBES = [
     deviceId: 7193,
     write: true,
     // Packed uint64: W0=PT1 counter, W1=PT2 counter, W2=Pump Activation, W3=spare.
-    // Test value: PT1=123 (12.3 mA×10), PT2=87 (8.7 mA×10), Pump Activation=1.
+    // Counters are the pressure set-point in BAR × 10 (bar = mA − 4).
+    // Test value: PT1=123 (12.3 bar), PT2=87 (8.7 bar), Pump Activation=1.
     build: (v) => ({ id: 7193, cmd: 'SetValue', value: v }),
     testValue: 123 + 87 * 2 ** 16 + 1 * 2 ** 32,
   },

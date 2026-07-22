@@ -112,7 +112,9 @@ Applies to: Zone temperature (4147).
 
 - `epbox/imox/demo/site/batam/edge/cg-uwp40-01/metrics`
     - FROM PLC - SIEMENS (6563) — DO output status (read-only, 14 channels)
-    - TO PLC - SIEMENS (7193) — write target (packed PT1/PT2/Pump Activation); not consumed on read
+    - TO PLC - SIEMENS (7193) — write target (packed PT1/PT2/Pump Activation). The
+      mobile app doesn't consume it on read; the **dashboard reads it back** to
+      verify the commanded set-points (unpack 4 words — see Dashboard-SCADA.md §8)
 - `epbox/imox/demo/site/batam/edge/cg-uwp40-01/pressure-transmitter`
     - Pressure Transmitter - Pump 1 (6983)
     - Pressure Transmitter - Pump 2 (7019)
@@ -158,13 +160,15 @@ offline the tab runs a **local simulation** to verify the pack/unpack maths.
 `DO_BIT_MAP` / `packToPlcCommand` live in `pump-room.tsx` / `mqtt-topics.ts`; full
 layout in `docs/Protocols/Dashboard-SCADA.md` §5.
 
-**Pressure transmitter encoding (inject-only).** PT-001 / PT-002 are written, not
-read back — their set-points are packed into TO PLC `W[0]` / `W[1]`. Each word is a
-Modbus **unsigned integer**, so a fractional mA cannot be stored; the app encodes
-**`mA × 10`** before packing (`114` for `11.4 mA`), preserving the 0.1 mA slider
-step. Encoding lives in `pressureMaToCounter` (`src/lib/mqtt-topics.ts`). Confirm
-the PLC's expected scale with `scripts/mqtt-probe.mjs` before trusting a live
-gateway.
+**Pressure transmitter encoding (inject-only, bar).** PT-001 / PT-002 are written,
+not read back — their set-points are packed into TO PLC `W[0]` / `W[1]`. The PLC
+expects the value in **bar** (engineering unit), not the raw 4–20 mA loop current:
+`bar = mA − 4` (4 mA → 0 bar, 20 mA → 16 bar). The UI still shows the mA slider —
+only the packed value changed. Each word is a Modbus **unsigned integer**, so the
+app encodes **`(mA − 4) × 10`** before packing (`74` for `11.4 mA` = `7.4 bar`),
+preserving the 0.1-bar step. Encoding lives in `pressureMaToBar` →
+`pressureBarToCounter` (`src/lib/mqtt-topics.ts`). Confirm the PLC's expected scale
+with `scripts/mqtt-probe.mjs` before trusting a live gateway.
 
 ## Reference
 

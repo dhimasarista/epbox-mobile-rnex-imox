@@ -574,14 +574,27 @@ export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPay
   };
 }
 
-// A pressure set-point word is a Modbus unsigned integer, so a fractional mA
-// cannot be stored directly. Encode mA as (mA × 10) before packing it into the
-// TO PLC word (W[1] / W[2]); the 0.1 mA slider resolution survives the round
+// The PLC expects the pressure set-point in the engineering unit **bar**, not the
+// raw 4–20 mA loop current (the UI still shows the mA slider; only the value we
+// send changed). The transmitter maps 4 mA → 0 bar, 20 mA → 16 bar, so
+// `bar = mA − 4`. A set-point word is a Modbus unsigned integer, so a fractional
+// bar cannot be stored directly — encode it as (bar × 10) before packing into the
+// TO PLC word (W[0] / W[1]); the 0.1-bar slider resolution survives the round
 // trip. Inject-only — there is no read-back to decode.
-export const PRESSURE_MA_COUNTER_SCALE = 10;
+export const PRESSURE_COUNTER_SCALE = 10;
+export const PRESSURE_MA_ZERO_BAR = 4; // 4 mA loop current corresponds to 0 bar
 
+export function pressureMaToBar(mA: number) {
+  return mA - PRESSURE_MA_ZERO_BAR;
+}
+
+export function pressureBarToCounter(bar: number) {
+  return Math.round(bar * PRESSURE_COUNTER_SCALE);
+}
+
+// Convenience: mA → bar → counter, the full path used when packing a slider value.
 export function pressureMaToCounter(mA: number) {
-  return Math.round(mA * PRESSURE_MA_COUNTER_SCALE);
+  return pressureBarToCounter(pressureMaToBar(mA));
 }
 
 function getBinarySignalLabel(value: number | null) {
