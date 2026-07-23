@@ -46,7 +46,8 @@ type ToPlcCommandSnapshot = {
   baselineReceivedAt: number | null;
   expectedPacked: number;
   successMessage: string;
-  previousPumpActPulse: number;
+  nextPumpActivationValue?: 0 | 1;
+  previousNextPumpActivationValue?: 0 | 1;
   pressureField?: PumpRoomPlcInputKey;
   previousConfirmedValue?: string;
   previousDraftValue?: string;
@@ -125,7 +126,6 @@ const MA_STEP = 0.1;
 
 // Debounce slider drags before publishing so we don't flood the OT channel.
 const COMMAND_DEBOUNCE_MS = 250;
-const PUMP_ACTIVATION_RESET_DELAY_MS = 2_000;
 const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 
 // PT-001 / PT-002: alarm thresholds in mA
@@ -156,12 +156,6 @@ function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0) {
     pressurePump1Counter: pressureMaToCounter(parseMa(inputs.pressurePump1)),
     pressurePump2Counter: pressureMaToCounter(parseMa(inputs.pressurePump2)),
     pumpActivation,
-  });
-}
-
-function wait(ms: number) {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
   });
 }
 
@@ -421,24 +415,33 @@ function PressureSlider({
 function PumpActivationButton({
   simulation,
   disabled,
-  onFire,
+  nextValue,
+  onPress,
 }: {
   simulation: boolean;
   disabled: boolean;
-  onFire: () => void;
+  nextValue: 0 | 1;
+  onPress: () => void;
 }) {
+  const isReset = nextValue === 0;
+
   return (
     <TouchableOpacity
-      style={[s.pumpActBtn, simulation && s.pumpActBtnSim, disabled && s.pumpActBtnDisabled]}
+      style={[
+        s.pumpActBtn,
+        simulation && s.pumpActBtnSim,
+        isReset && s.pumpActBtnOff,
+        disabled && s.pumpActBtnDisabled,
+      ]}
       disabled={disabled}
-      onPress={onFire}
+      onPress={onPress}
       activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityState={{ disabled }}
-      accessibilityLabel="Pump Activation">
-      <Feather name="zap" size={16} color={AppColors.textInverse} />
+      accessibilityLabel={isReset ? 'Pump Reset' : 'Pump Activation'}>
+      <Feather name={isReset ? 'power' : 'zap'} size={16} color={AppColors.textInverse} />
       <Text style={s.pumpActBtnText}>
-        {simulation ? 'Pump Activation' : 'Kirim Pump Activation'}
+        {simulation ? (isReset ? 'Pump Reset' : 'Pump Activation') : isReset ? 'Pump Reset' : 'Pump Activation'}
       </Text>
     </TouchableOpacity>
   );
@@ -517,15 +520,12 @@ export default function PumpRoom() {
   const injectFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commandErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Pump Activation is momentary — normally W[2] = 0. When fired we pulse it to 1
-  // for ~2 s so the packed word / W-grid transparently shows what was sent.
-  const [pumpActPulse, setPumpActPulse] = useState(0);
-  const pumpActPulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [nextPumpActivationValue, setNextPumpActivationValue] = useState<0 | 1>(1);
 
-  // Live TO PLC preview. W[2] follows the momentary pulse so the grid stays honest.
+  // Live TO PLC preview stays at W[2] = 0; Pump Activation is a command edge, not UI state.
   const pt1Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump1));
   const pt2Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump2));
-  const toPlcPacked = packInputs(injectDraft, pumpActPulse);
+  const toPlcPacked = packInputs(injectDraft, 0);
 
   const flashInject = useCallback((message: string) => {
     setInjectFlash(message);
@@ -561,7 +561,9 @@ export default function PumpRoom() {
       });
     }
 
-    setPumpActPulse(command.snapshot.previousPumpActPulse);
+    if (command.snapshot.previousNextPumpActivationValue !== undefined) {
+      setNextPumpActivationValue(command.snapshot.previousNextPumpActivationValue);
+    }
   }, []);
 
   const commitToPlcCommand = useCallback((command: PendingCommandState<ToPlcCommandSnapshot>) => {
@@ -578,14 +580,15 @@ export default function PumpRoom() {
       });
     }
 
+    if (
+      command.snapshot.kind === 'pumpActivation' &&
+      command.snapshot.nextPumpActivationValue !== undefined
+    ) {
+      setNextPumpActivationValue(command.snapshot.nextPumpActivationValue);
+    }
+
     flashInject(command.snapshot.successMessage);
   }, [flashInject]);
-
-  const pulsePumpActivation = useCallback(() => {
-    setPumpActPulse(1);
-    if (pumpActPulseTimeoutRef.current) clearTimeout(pumpActPulseTimeoutRef.current);
-    pumpActPulseTimeoutRef.current = setTimeout(() => setPumpActPulse(0), 2_000);
-  }, []);
 
   // ── FROM PLC: sync metrics → DO word (only while connected) ──
   useEffect(() => {
@@ -692,7 +695,7 @@ export default function PumpRoom() {
       overrides: { pressurePump1Ma?: number; pressurePump2Ma?: number; pumpActivation?: number },
       snapshot: Omit<
         ToPlcCommandSnapshot,
-        'baselineReceivedAt' | 'expectedPacked' | 'previousPumpActPulse'
+        'baselineReceivedAt' | 'expectedPacked' | 'previousNextPumpActivationValue'
       >
     ) => {
       const commandId = getToPlcCommandId(kind);
@@ -718,7 +721,7 @@ export default function PumpRoom() {
           ...snapshot,
           baselineReceivedAt: metricsReceivedAt,
           expectedPacked: packed,
-          previousPumpActPulse: pumpActPulse,
+          previousNextPumpActivationValue: nextPumpActivationValue,
         },
         timeoutMs: DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
         onTimeout: (command) => {
@@ -734,23 +737,6 @@ export default function PumpRoom() {
       try {
         await publishPackedToPlc(packed);
 
-        if (kind === 'pumpActivation') {
-          await wait(PUMP_ACTIVATION_RESET_DELAY_MS);
-          await publishPackedToPlc(
-            packToPlcCommand({
-              pressurePump1Counter,
-              pressurePump2Counter,
-              pumpActivation: 0,
-            })
-          );
-
-          if (pumpActPulseTimeoutRef.current) {
-            clearTimeout(pumpActPulseTimeoutRef.current);
-            pumpActPulseTimeoutRef.current = null;
-          }
-          setPumpActPulse(0);
-        }
-
         setLastCommandError(null);
       } catch (err: unknown) {
         resolveToPlcCommand(commandId, {
@@ -764,8 +750,8 @@ export default function PumpRoom() {
     [
       isToPlcCommandPending,
       metricsReceivedAt,
+      nextPumpActivationValue,
       publishPackedToPlc,
-      pumpActPulse,
       resolveToPlcCommand,
       rollbackToPlcCommand,
       showCommandError,
@@ -791,7 +777,6 @@ export default function PumpRoom() {
       });
       if (injectFlashTimeoutRef.current) clearTimeout(injectFlashTimeoutRef.current);
       if (commandErrorTimeoutRef.current) clearTimeout(commandErrorTimeoutRef.current);
-      if (pumpActPulseTimeoutRef.current) clearTimeout(pumpActPulseTimeoutRef.current);
     };
   }, []);
 
@@ -860,33 +845,36 @@ export default function PumpRoom() {
     [confirmedInject, isToPlcCommandPending, sendToPlcCommand, showCommandError, status]
   );
 
-  // Momentary: fire once with W[2] = 1. The pulse lights up W2 in the grid either
-  // way; offline it just shows the packed value instead of publishing.
-  const firePumpActivation = useCallback(() => {
+  const triggerPumpActivation = useCallback(() => {
     const commandId = getToPlcCommandId('pumpActivation');
+    const valueToSend = nextPumpActivationValue;
+    const nextValue: 0 | 1 = valueToSend === 1 ? 0 : 1;
+    const label = valueToSend === 1 ? 'Pump Activation' : 'Pump Reset';
 
     if (isToPlcCommandPending(commandId)) {
-      showCommandError('Pump Activation is already waiting for gateway response.');
+      showCommandError(`${label} is already waiting for gateway response.`);
       return;
     }
 
-    pulsePumpActivation();
     if (status !== 'connected') {
-      flashInject(`SIM — Pump Activation → ${packInputs(injectDraftRef.current, 1)}`);
+      setNextPumpActivationValue(nextValue);
+      flashInject(`SIM — ${label} → ${packInputs(injectDraftRef.current, valueToSend)}`);
       return;
     }
+
     void sendToPlcCommand(
       'pumpActivation',
-      { pumpActivation: 1 },
+      { pumpActivation: valueToSend },
       {
         kind: 'pumpActivation',
-        successMessage: 'Pump Activation sent → PLC',
+        nextPumpActivationValue: nextValue,
+        successMessage: `${label} sent → PLC`,
       }
     );
   }, [
     flashInject,
     isToPlcCommandPending,
-    pulsePumpActivation,
+    nextPumpActivationValue,
     sendToPlcCommand,
     showCommandError,
     status,
@@ -965,14 +953,15 @@ export default function PumpRoom() {
             <ToPlcWordDisplay
               pt1Counter={pt1Counter}
               pt2Counter={pt2Counter}
-              pumpActivation={pumpActPulse}
+              pumpActivation={0}
               packed={toPlcPacked}
             />
             {/* Pump Activation — momentary command (W2) */}
             <PumpActivationButton
               simulation={isSimulation}
               disabled={isPumpActivationPending}
-              onFire={firePumpActivation}
+              nextValue={nextPumpActivationValue}
+              onPress={triggerPumpActivation}
             />
 
             {/* PT-001 / PT-002 inject in 4–20 mA (W0 / W1) */}
@@ -1134,6 +1123,7 @@ const s = StyleSheet.create({
     paddingHorizontal: AppSpacing.lg,
   },
   pumpActBtnSim: { backgroundColor: AppColors.error },
+  pumpActBtnOff: { backgroundColor: AppColors.text },
   pumpActBtnDisabled: { opacity: 0.55 },
   pumpActBtnText: { fontSize: 14, fontWeight: '800', color: AppColors.textInverse, letterSpacing: 0.3 },
 
