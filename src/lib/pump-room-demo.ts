@@ -9,8 +9,8 @@ export type PumpRoomPlcInputs = Record<PumpRoomPlcInputKey, string>;
 
 // Defaults in bar. The TO PLC words use the same integer value: UI 1 bar -> word 1.
 export const DEFAULT_PUMP_ROOM_PLC_INPUTS: PumpRoomPlcInputs = {
-  pressurePump1: '7 bar',
-  pressurePump2: '7 bar',
+  pressurePump1: '3 bar',
+  pressurePump2: '3 bar',
 };
 
 export const PUMP_ROOM_PLC_FIELDS: {
@@ -21,12 +21,12 @@ export const PUMP_ROOM_PLC_FIELDS: {
   {
     key: 'pressurePump1',
     label: 'PT-001 — Pressure Pump 1',
-    placeholder: 'Example: 7 bar',
+    placeholder: 'Example: 3 bar',
   },
   {
     key: 'pressurePump2',
     label: 'PT-002 — Pressure Pump 2',
-    placeholder: 'Example: 7 bar',
+    placeholder: 'Example: 3 bar',
   },
 ];
 

@@ -1,4 +1,3 @@
-import { Slider } from '@expo/ui/community/slider';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,6 +21,7 @@ import {
   getCarloGavazziCounterNumericValue,
   packToPlcCommand,
   pressureBarToCounter,
+  unpackToPlcCommand,
 } from '@/lib/mqtt-topics';
 import {
   DEFAULT_PUMP_ROOM_PLC_INPUTS,
@@ -75,7 +75,7 @@ function isPressureCommand(
 
 // ─── FROM PLC — Digital Output status (id 6563, read-only) ───────────────────
 // The PLC reports its DO output as one uint16 word (bit 0 = LSB). Per docs/DO.md
-// bits 0..13 are functional channels, bits 14..15 spare. The app RECEIVES and
+// bits 0..15 are functional channels. The app RECEIVES and
 // bit-unpacks this word for display — it never writes DO. When MQTT is offline
 // the screen switches to simulation: each channel becomes a tappable ON/OFF, and
 // the decimal word + bits recompute live — so the calculation can be checked
@@ -96,6 +96,8 @@ const DO_CHANNELS = [
   { key: 'pumpCRunning',         label: 'Pump C Running' },
   { key: 'localMode',            label: 'Local Mode' },
   { key: 'remoteMode',           label: 'Remote Mode' },
+  { key: 'pumpATripped',         label: 'Pump A Tripped' },
+  { key: 'pumpBTripped',         label: 'Pump B Tripped' },
 ] as const;
 
 type DoKey = (typeof DO_CHANNELS)[number]['key'];
@@ -115,18 +117,19 @@ const DO_BIT_MAP: BitChannelMap<DoKey> = {
   pumpCRunning:         { wordIndex: 0, bitIndex: 11 },
   localMode:            { wordIndex: 0, bitIndex: 12 },
   remoteMode:           { wordIndex: 0, bitIndex: 13 },
+  pumpATripped:         { wordIndex: 0, bitIndex: 14 },
+  pumpBTripped:         { wordIndex: 0, bitIndex: 15 },
 };
 
-// Full 16-bit DO word (bits 14 & 15 spare).
+// Full 16-bit DO word.
 const DO_WORD_MASK = 0xffff;
 
 // ─── Inject Value Constants (pressure set-point) ─────────────────────────────
 
 const PRESSURE_MIN_BAR = 0;
 const PRESSURE_MAX_BAR = 16;
-const PRESSURE_STEP_BAR = 1;
 
-// Debounce slider drags before publishing so we don't flood the OT channel.
+// Debounce button selections before publishing so we don't flood the OT channel.
 const COMMAND_DEBOUNCE_MS = 250;
 const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 
@@ -163,6 +166,15 @@ function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0) {
     pressurePump2Counter: pressureBarToCounter(parsePressureBar(inputs.pressurePump2)),
     pumpActivation,
   });
+}
+
+function getPumpRoomInputsFromToPlcValue(value: number): PumpRoomPlcInputs {
+  const words = unpackToPlcCommand(value);
+
+  return {
+    pressurePump1: formatPressureBar(words.pressurePump1Counter),
+    pressurePump2: formatPressureBar(words.pressurePump2Counter),
+  };
 }
 
 function getDerivedAlarm(form: PumpRoomPlcInputs): DerivedAlarm {
@@ -324,39 +336,7 @@ function ToPlcWordDisplay({
   );
 }
 
-function EngineeringSignalBands({ tone }: { tone: SignalTone }) {
-  return (
-    <View style={stationStyles.signalBandsRow}>
-      <View style={[stationStyles.signalBand, stationStyles.signalBandNormal,  tone === 'normal'  && stationStyles.signalBandActive]} />
-      <View style={[stationStyles.signalBand, stationStyles.signalBandWarning, tone === 'warning' && stationStyles.signalBandActive]} />
-      <View style={[stationStyles.signalBand, stationStyles.signalBandDanger,  tone === 'danger'  && stationStyles.signalBandActive]} />
-    </View>
-  );
-}
-
-function PressureBlockBar({ bar, tone }: { bar: number; tone: SignalTone }) {
-  return (
-    <View style={s.blockBarRow}>
-      {Array.from({ length: PRESSURE_MAX_BAR }, (_, i) => {
-        const segBar = i + 1;
-        const filled = bar >= segBar - 0.5;
-        const segTone: SignalTone =
-          segBar > PRESSURE_DANGER_BAR ? 'danger'
-          : segBar > PRESSURE_WARNING_BAR ? 'warning'
-          : 'normal';
-        const palette = getSignalPalette(segTone);
-        return (
-          <View
-            key={i}
-            style={[s.blockBarSegment, { backgroundColor: filled ? palette.accent : palette.track }]}
-          />
-        );
-      })}
-    </View>
-  );
-}
-
-function PressureSlider({
+function PressureButtonGrid({
   label,
   value,
   disabled,
@@ -367,16 +347,10 @@ function PressureSlider({
   disabled: boolean;
   onChange: (v: string) => void;
 }) {
-  // Inject-only: the slider value is the single source of truth (no gateway
-  // echo to reconcile against), so tone / chip / bar all read from it directly.
   const draftBar = parsePressureBar(value);
   const tone = getPressureTone(draftBar);
   const palette = getSignalPalette(tone);
-  const statusLabel = tone === 'danger'
-    ? `>= ${PRESSURE_DANGER_BAR} bar`
-    : tone === 'warning'
-    ? `>= ${PRESSURE_WARNING_BAR} bar`
-    : 'Normal';
+
   return (
     <View style={stationStyles.fieldBlock}>
       <View style={stationStyles.fieldHeaderRow}>
@@ -386,33 +360,48 @@ function PressureSlider({
           <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatPressureBar(draftBar)}</Text>
         </View>
       </View>
-      <View style={[stationStyles.signalSliderShell, tone === 'normal' && stationStyles.signalSliderShellNormal, tone === 'warning' && stationStyles.signalSliderShellWarning, tone === 'danger' && stationStyles.signalSliderShellDanger]}>
-        <Slider
-          value={draftBar}
-          minimumValue={PRESSURE_MIN_BAR}
-          maximumValue={PRESSURE_MAX_BAR}
-          step={PRESSURE_STEP_BAR}
-          minimumTrackTintColor={palette.accent}
-          maximumTrackTintColor={palette.track}
-          thumbTintColor={palette.accent}
-          disabled={disabled}
-          onValueChange={(v) => onChange(formatPressureBar(v))}
-          style={stationStyles.pressureSlider}
-        />
-        <EngineeringSignalBands tone={tone} />
+      <View style={s.pressureBarControl}>
+        {Array.from({ length: PRESSURE_MAX_BAR - PRESSURE_MIN_BAR + 1 }, (_, index) => {
+          const barValue = PRESSURE_MIN_BAR + index;
+          const isFilled = barValue <= draftBar;
+          const isSelected = barValue === draftBar;
+          const buttonTone = getPressureTone(barValue);
+          const buttonPalette = getSignalPalette(buttonTone);
+
+          return (
+            <TouchableOpacity
+              key={barValue}
+              activeOpacity={0.82}
+              disabled={disabled}
+              onPress={() => onChange(formatPressureBar(barValue))}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected, disabled }}
+              accessibilityLabel={`${label} ${barValue} bar`}
+              style={[
+                s.pressureBarSegment,
+                index === 0 && s.pressureBarSegmentFirst,
+                index === PRESSURE_MAX_BAR - PRESSURE_MIN_BAR && s.pressureBarSegmentLast,
+                {
+                  borderColor: isSelected ? buttonPalette.accent : AppColors.border,
+                  backgroundColor: isFilled ? buttonPalette.accent : AppColors.surfaceMuted,
+                },
+                disabled && s.pressureBarSegmentDisabled,
+              ]}>
+              <Text
+                style={[
+                  s.pressureBarSegmentText,
+                  isFilled && s.pressureBarSegmentTextFilled,
+                ]}>
+                {barValue}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
       <View style={stationStyles.sliderRangeRow}>
-        <Text style={stationStyles.sliderRangeText}>{PRESSURE_MIN_BAR} bar</Text>
-        <View style={[stationStyles.signalStateBadge, { backgroundColor: palette.surface, borderColor: palette.border }]}>
-          <Text style={[stationStyles.signalStateText, { color: palette.text }]}>{statusLabel}</Text>
-        </View>
-        <Text style={stationStyles.sliderRangeText}>{PRESSURE_MAX_BAR} bar</Text>
+        <Text style={stationStyles.sliderRangeText}>{PRESSURE_MIN_BAR}</Text>
+        <Text style={stationStyles.sliderRangeText}>{PRESSURE_MAX_BAR}</Text>
       </View>
-      <View style={s.euDisplayRow}>
-        <Text style={s.euDisplayLabel}>Counter</Text>
-        <Text style={[s.euDisplayValue, { color: palette.text }]}>{pressureBarToCounter(draftBar)}</Text>
-      </View>
-      <PressureBlockBar bar={draftBar} tone={tone} />
     </View>
   );
 }
@@ -494,6 +483,11 @@ export default function PumpRoom() {
   const [simDoWord, setSimDoWord] = useState(0);     // simulation: built by tapping channels
   const doWord = isSimulation ? simDoWord : lastDoWord;
   const doState = unpackChannels([doWord], DO_BIT_MAP);
+  const isPressureFieldTripped = useCallback(
+    (key: PumpRoomPlcInputKey) =>
+      key === 'pressurePump1' ? doState.pumpATripped : doState.pumpBTripped,
+    [doState.pumpATripped, doState.pumpBTripped]
+  );
 
   // Simulation: tap a channel to flip its bit; decimal + bits recompute from the word.
   const toggleDoChannel = useCallback((key: DoKey) => {
@@ -633,6 +627,10 @@ export default function PumpRoom() {
     }
 
     const roundedToPlcValue = Math.round(toPlcValue);
+    const gatewayInputs = getPumpRoomInputsFromToPlcValue(roundedToPlcValue);
+    const gatewayWords = unpackToPlcCommand(roundedToPlcValue);
+    const gatewayRemoteActivationValue: 0 | 1 =
+      Math.round(gatewayWords.pumpActivation) >= 1 ? 1 : 0;
     const ackedCommands = Object.values(pendingToPlcCommandMap).filter((command) => {
       const isFresh =
         command.snapshot.baselineReceivedAt === null
@@ -645,6 +643,53 @@ export default function PumpRoom() {
 
       return isFresh && command.snapshot.expectedPacked === roundedToPlcValue;
     });
+    const isCommandAcked = (commandId: string) =>
+      ackedCommands.some((command) => command.id === commandId);
+    const shouldSyncPressurePump1 =
+      !isToPlcCommandPending(getToPlcCommandId('pressurePump1')) ||
+      isCommandAcked(getToPlcCommandId('pressurePump1'));
+    const shouldSyncPressurePump2 =
+      !isToPlcCommandPending(getToPlcCommandId('pressurePump2')) ||
+      isCommandAcked(getToPlcCommandId('pressurePump2'));
+    const shouldSyncRemoteActivation =
+      !isToPlcCommandPending(getToPlcCommandId('pumpActivation')) ||
+      isCommandAcked(getToPlcCommandId('pumpActivation'));
+
+    if (shouldSyncPressurePump1 || shouldSyncPressurePump2) {
+      setConfirmedInject((current) => {
+        const next = { ...current };
+
+        if (shouldSyncPressurePump1) {
+          next.pressurePump1 = gatewayInputs.pressurePump1;
+        }
+
+        if (shouldSyncPressurePump2) {
+          next.pressurePump2 = gatewayInputs.pressurePump2;
+        }
+
+        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
+        return next;
+      });
+
+      setInjectDraft((current) => {
+        const next = { ...current };
+
+        if (shouldSyncPressurePump1) {
+          next.pressurePump1 = gatewayInputs.pressurePump1;
+        }
+
+        if (shouldSyncPressurePump2) {
+          next.pressurePump2 = gatewayInputs.pressurePump2;
+        }
+
+        return next;
+      });
+    }
+
+    if (shouldSyncRemoteActivation) {
+      setRemoteActivationValue(gatewayRemoteActivationValue);
+      setNextPumpActivationValue(gatewayRemoteActivationValue === 1 ? 0 : 1);
+    }
 
     if (ackedCommands.length === 0) {
       return;
@@ -671,6 +716,7 @@ export default function PumpRoom() {
     setLastCommandError(null);
   }, [
     commitToPlcCommand,
+    isToPlcCommandPending,
     metricsReceivedAt,
     metricsTopic.payload,
     pendingToPlcCommandMap,
@@ -733,7 +779,7 @@ export default function PumpRoom() {
       const packed = packToPlcCommand({
         pressurePump1Counter,
         pressurePump2Counter,
-        pumpActivation: overrides.pumpActivation ?? 0,
+        pumpActivation: overrides.pumpActivation ?? remoteActivationValue,
       });
       const pendingCommand = startToPlcCommand({
         id: commandId,
@@ -813,10 +859,15 @@ export default function PumpRoom() {
     };
   }, []);
 
-  // Slider settle -> persist + (if connected) publish the packed word. Offline it
+  // Button selection settles -> persist + (if connected) publish the packed word. Offline it
   // stays local so you can watch the pack calculation without a broker.
   const updatePressureField = useCallback(
     (key: PumpRoomPlcInputKey, value: string) => {
+      if (isPressureFieldTripped(key)) {
+        showCommandError(`${key === 'pressurePump1' ? 'PT-001' : 'PT-002'} disabled: pump tripped.`);
+        return;
+      }
+
       const commandId = getToPlcCommandId(key);
 
       if (isToPlcCommandPending(commandId)) {
@@ -877,7 +928,14 @@ export default function PumpRoom() {
         );
       }, COMMAND_DEBOUNCE_MS);
     },
-    [confirmedInject, isToPlcCommandPending, sendToPlcCommand, showCommandError, status]
+    [
+      confirmedInject,
+      isPressureFieldTripped,
+      isToPlcCommandPending,
+      sendToPlcCommand,
+      showCommandError,
+      status,
+    ]
   );
 
   const triggerPumpActivation = useCallback(() => {
@@ -919,8 +977,9 @@ export default function PumpRoom() {
 
   const isPumpActivationPending = isToPlcCommandPending(getToPlcCommandId('pumpActivation'));
   const getPressurePending = useCallback(
-    (key: PumpRoomPlcInputKey) => isToPlcCommandPending(getToPlcCommandId(key)),
-    [isToPlcCommandPending]
+    (key: PumpRoomPlcInputKey) =>
+      isToPlcCommandPending(getToPlcCommandId(key)) || isPressureFieldTripped(key),
+    [isPressureFieldTripped, isToPlcCommandPending]
   );
   const latestPendingToPlcCommand = useMemo(() => {
     const pendingCommands = Object.values(pendingToPlcCommandMap);
@@ -1004,7 +1063,7 @@ export default function PumpRoom() {
             {/* PT-001 / PT-002 inject in bar (W0 / W1) */}
             <View style={stationStyles.sectionCard}>
               {PUMP_ROOM_PLC_FIELDS.map((field) => (
-                <PressureSlider
+                <PressureButtonGrid
                   key={field.key}
                   label={field.label}
                   value={injectDraft[field.key]}
@@ -1179,33 +1238,46 @@ const s = StyleSheet.create({
     fontWeight: '700',
   },
 
-  euDisplayRow: {
+  pressureBarControl: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: AppSpacing.xs,
-    marginTop: AppSpacing.xs,
-  },
-  euDisplayLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: AppColors.textSubtle,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  euDisplayValue: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  blockBarRow: {
-    flexDirection: 'row',
-    gap: 3,
     marginTop: AppSpacing.sm,
+    borderRadius: AppRadii.md,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    backgroundColor: AppColors.surfaceMuted,
   },
-  blockBarSegment: {
+  pressureBarSegment: {
     flex: 1,
-    height: 18,
-    borderRadius: 3,
+    minWidth: 0,
+    height: 42,
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pressureBarSegmentFirst: {
+    borderTopLeftRadius: AppRadii.md,
+    borderBottomLeftRadius: AppRadii.md,
+  },
+  pressureBarSegmentLast: {
+    borderRightWidth: 0,
+    borderTopRightRadius: AppRadii.md,
+    borderBottomRightRadius: AppRadii.md,
+  },
+  pressureBarSegmentDisabled: {
+    opacity: 0.45,
+  },
+  pressureBarSegmentText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: AppColors.text,
+    fontVariant: ['tabular-nums'],
+  },
+  pressureBarSegmentTextFilled: {
+    color: AppColors.textInverse,
   },
 
   bottomSpacer: { height: 96 },
