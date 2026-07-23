@@ -48,6 +48,8 @@ type ToPlcCommandSnapshot = {
   successMessage: string;
   nextPumpActivationValue?: 0 | 1;
   previousNextPumpActivationValue?: 0 | 1;
+  nextRemoteActivationValue?: 0 | 1;
+  previousRemoteActivationValue?: 0 | 1;
   pressureField?: PumpRoomPlcInputKey;
   previousConfirmedValue?: string;
   previousDraftValue?: string;
@@ -149,8 +151,8 @@ function getPressureTone(mA: number): SignalTone {
   return 'normal';
 }
 
-// Pack the current pressure drafts (+ an optional momentary pump-activation) into
-// the TO PLC uint64 (7193): W0=PT1, W1=PT2, W2=Pump Activation, W3=spare.
+// Pack the current pressure drafts (+ optional remote activation bit) into
+// the TO PLC uint64 (7193): W0=PT1, W1=PT2, W2=Remote Activation, W3=spare.
 function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0) {
   return packToPlcCommand({
     pressurePump1Counter: pressureMaToCounter(parseMa(inputs.pressurePump1)),
@@ -424,6 +426,7 @@ function PumpActivationButton({
   onPress: () => void;
 }) {
   const isReset = nextValue === 0;
+  const label = isReset ? 'Remote Reset' : 'Remote Activation';
 
   return (
     <TouchableOpacity
@@ -438,11 +441,9 @@ function PumpActivationButton({
       activeOpacity={0.85}
       accessibilityRole="button"
       accessibilityState={{ disabled }}
-      accessibilityLabel={isReset ? 'Pump Reset' : 'Pump Activation'}>
+      accessibilityLabel={label}>
       <Feather name={isReset ? 'power' : 'zap'} size={16} color={AppColors.textInverse} />
-      <Text style={s.pumpActBtnText}>
-        {simulation ? (isReset ? 'Pump Reset' : 'Pump Activation') : isReset ? 'Pump Reset' : 'Pump Activation'}
-      </Text>
+      <Text style={s.pumpActBtnText}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -520,12 +521,13 @@ export default function PumpRoom() {
   const injectFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commandErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [remoteActivationValue, setRemoteActivationValue] = useState<0 | 1>(0);
   const [nextPumpActivationValue, setNextPumpActivationValue] = useState<0 | 1>(1);
 
-  // Live TO PLC preview stays at W[2] = 0; Pump Activation is a command edge, not UI state.
+  // W[2] is held only after MQTT feedback confirms the remote activation/reset command.
   const pt1Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump1));
   const pt2Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump2));
-  const toPlcPacked = packInputs(injectDraft, 0);
+  const toPlcPacked = packInputs(injectDraft, remoteActivationValue);
 
   const flashInject = useCallback((message: string) => {
     setInjectFlash(message);
@@ -564,6 +566,10 @@ export default function PumpRoom() {
     if (command.snapshot.previousNextPumpActivationValue !== undefined) {
       setNextPumpActivationValue(command.snapshot.previousNextPumpActivationValue);
     }
+
+    if (command.snapshot.previousRemoteActivationValue !== undefined) {
+      setRemoteActivationValue(command.snapshot.previousRemoteActivationValue);
+    }
   }, []);
 
   const commitToPlcCommand = useCallback((command: PendingCommandState<ToPlcCommandSnapshot>) => {
@@ -585,6 +591,13 @@ export default function PumpRoom() {
       command.snapshot.nextPumpActivationValue !== undefined
     ) {
       setNextPumpActivationValue(command.snapshot.nextPumpActivationValue);
+    }
+
+    if (
+      command.snapshot.kind === 'pumpActivation' &&
+      command.snapshot.nextRemoteActivationValue !== undefined
+    ) {
+      setRemoteActivationValue(command.snapshot.nextRemoteActivationValue);
     }
 
     flashInject(command.snapshot.successMessage);
@@ -695,7 +708,10 @@ export default function PumpRoom() {
       overrides: { pressurePump1Ma?: number; pressurePump2Ma?: number; pumpActivation?: number },
       snapshot: Omit<
         ToPlcCommandSnapshot,
-        'baselineReceivedAt' | 'expectedPacked' | 'previousNextPumpActivationValue'
+        | 'baselineReceivedAt'
+        | 'expectedPacked'
+        | 'previousNextPumpActivationValue'
+        | 'previousRemoteActivationValue'
       >
     ) => {
       const commandId = getToPlcCommandId(kind);
@@ -722,6 +738,7 @@ export default function PumpRoom() {
           baselineReceivedAt: metricsReceivedAt,
           expectedPacked: packed,
           previousNextPumpActivationValue: nextPumpActivationValue,
+          previousRemoteActivationValue: remoteActivationValue,
         },
         timeoutMs: DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
         onTimeout: (command) => {
@@ -752,6 +769,7 @@ export default function PumpRoom() {
       metricsReceivedAt,
       nextPumpActivationValue,
       publishPackedToPlc,
+      remoteActivationValue,
       resolveToPlcCommand,
       rollbackToPlcCommand,
       showCommandError,
@@ -849,7 +867,7 @@ export default function PumpRoom() {
     const commandId = getToPlcCommandId('pumpActivation');
     const valueToSend = nextPumpActivationValue;
     const nextValue: 0 | 1 = valueToSend === 1 ? 0 : 1;
-    const label = valueToSend === 1 ? 'Pump Activation' : 'Pump Reset';
+    const label = valueToSend === 1 ? 'Remote Activation' : 'Remote Reset';
 
     if (isToPlcCommandPending(commandId)) {
       showCommandError(`${label} is already waiting for gateway response.`);
@@ -857,6 +875,7 @@ export default function PumpRoom() {
     }
 
     if (status !== 'connected') {
+      setRemoteActivationValue(valueToSend);
       setNextPumpActivationValue(nextValue);
       flashInject(`SIM — ${label} → ${packInputs(injectDraftRef.current, valueToSend)}`);
       return;
@@ -868,6 +887,7 @@ export default function PumpRoom() {
       {
         kind: 'pumpActivation',
         nextPumpActivationValue: nextValue,
+        nextRemoteActivationValue: valueToSend,
         successMessage: `${label} sent → PLC`,
       }
     );
@@ -953,10 +973,10 @@ export default function PumpRoom() {
             <ToPlcWordDisplay
               pt1Counter={pt1Counter}
               pt2Counter={pt2Counter}
-              pumpActivation={0}
+              pumpActivation={remoteActivationValue}
               packed={toPlcPacked}
             />
-            {/* Pump Activation — momentary command (W2) */}
+            {/* Remote Activation / Reset — W2 command edge */}
             <PumpActivationButton
               simulation={isSimulation}
               disabled={isPumpActivationPending}
