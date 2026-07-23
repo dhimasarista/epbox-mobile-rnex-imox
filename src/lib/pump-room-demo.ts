@@ -7,11 +7,10 @@ export type PumpRoomPlcInputKey = 'pressurePump1' | 'pressurePump2';
 
 export type PumpRoomPlcInputs = Record<PumpRoomPlcInputKey, string>;
 
-// Defaults in 4–20 mA (raw signal). 4 mA = live zero, 20 mA = full scale.
-// PT-001 / PT-002: 4 mA = 0 bar, 20 mA = 16 bar  →  11.4 mA ≈ 7.4 bar
+// Defaults in bar. The TO PLC words use the same integer value: UI 1 bar -> word 1.
 export const DEFAULT_PUMP_ROOM_PLC_INPUTS: PumpRoomPlcInputs = {
-  pressurePump1: '11.4 mA',
-  pressurePump2: '11.1 mA',
+  pressurePump1: '7 bar',
+  pressurePump2: '7 bar',
 };
 
 export const PUMP_ROOM_PLC_FIELDS: {
@@ -22,12 +21,12 @@ export const PUMP_ROOM_PLC_FIELDS: {
   {
     key: 'pressurePump1',
     label: 'PT-001 — Pressure Pump 1',
-    placeholder: 'Example: 11.4 mA',
+    placeholder: 'Example: 7 bar',
   },
   {
     key: 'pressurePump2',
     label: 'PT-002 — Pressure Pump 2',
-    placeholder: 'Example: 11.1 mA',
+    placeholder: 'Example: 7 bar',
   },
 ];
 

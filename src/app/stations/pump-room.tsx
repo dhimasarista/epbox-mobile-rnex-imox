@@ -6,22 +6,22 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-nati
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
+  usePendingCommand,
+  type PendingCommandState,
+} from '@/hooks/use-pending-command';
+import {
   getChannelBit,
   setChannelBit,
   unpackChannels,
   type BitChannelMap,
 } from '@/lib/bit-packed-word';
 import {
-  DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
-  usePendingCommand,
-  type PendingCommandState,
-} from '@/hooks/use-pending-command';
-import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
   getCarloGavazziCounterNumericValue,
   packToPlcCommand,
-  pressureMaToCounter,
+  pressureBarToCounter,
 } from '@/lib/mqtt-topics';
 import {
   DEFAULT_PUMP_ROOM_PLC_INPUTS,
@@ -120,34 +120,38 @@ const DO_BIT_MAP: BitChannelMap<DoKey> = {
 // Full 16-bit DO word (bits 14 & 15 spare).
 const DO_WORD_MASK = 0xffff;
 
-// ─── Inject Value Constants (4–20 mA signal) ────────────────────────────────
+// ─── Inject Value Constants (pressure set-point) ─────────────────────────────
 
-const MA_MIN = 4;
-const MA_MAX = 20;
-const MA_STEP = 0.1;
+const PRESSURE_MIN_BAR = 0;
+const PRESSURE_MAX_BAR = 16;
+const PRESSURE_STEP_BAR = 1;
 
 // Debounce slider drags before publishing so we don't flood the OT channel.
 const COMMAND_DEBOUNCE_MS = 250;
 const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 
-// PT-001 / PT-002: alarm thresholds in mA
-const PRESSURE_LOW_MA     = 6;     // live-low
-const PRESSURE_WARNING_MA = 11.5;  // caution
-const PRESSURE_DANGER_MA  = 14.2;  // critical
-
-const PRESSURE_MAX_BAR = MA_MAX - MA_MIN; // 16 bar full scale
+// PT-001 / PT-002: alarm thresholds in bar
+const PRESSURE_LOW_BAR = 2;      // live-low
+const PRESSURE_WARNING_BAR = 7.5; // caution
+const PRESSURE_DANGER_BAR = 10.2; // critical
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function clampMa(v: number) { return Math.min(Math.max(Number.isFinite(v) ? v : MA_MIN, MA_MIN), MA_MAX); }
-function parseMa(v: string)  { return clampMa(Number.parseFloat(v)); }
-function formatMa(v: number) { return `${clampMa(v).toFixed(1)} mA`; }
+function clampPressureBar(v: number) {
+  return Math.min(Math.max(Number.isFinite(v) ? Math.round(v) : PRESSURE_MIN_BAR, PRESSURE_MIN_BAR), PRESSURE_MAX_BAR);
+}
 
-function maToPressureBar(mA: number) { return mA - MA_MIN; }
+function parsePressureBar(v: string) {
+  const parsed = Number.parseFloat(v);
+  const normalized = v.toLowerCase().includes('ma') ? parsed - 4 : parsed;
+  return clampPressureBar(normalized);
+}
 
-function getPressureTone(mA: number): SignalTone {
-  if (mA >= PRESSURE_DANGER_MA)  return 'danger';
-  if (mA >= PRESSURE_WARNING_MA) return 'warning';
+function formatPressureBar(v: number) { return `${clampPressureBar(v)} bar`; }
+
+function getPressureTone(bar: number): SignalTone {
+  if (bar >= PRESSURE_DANGER_BAR)  return 'danger';
+  if (bar >= PRESSURE_WARNING_BAR) return 'warning';
   return 'normal';
 }
 
@@ -155,27 +159,27 @@ function getPressureTone(mA: number): SignalTone {
 // the TO PLC uint64 (7193): W0=PT1, W1=PT2, W2=Remote Activation, W3=spare.
 function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0) {
   return packToPlcCommand({
-    pressurePump1Counter: pressureMaToCounter(parseMa(inputs.pressurePump1)),
-    pressurePump2Counter: pressureMaToCounter(parseMa(inputs.pressurePump2)),
+    pressurePump1Counter: pressureBarToCounter(parsePressureBar(inputs.pressurePump1)),
+    pressurePump2Counter: pressureBarToCounter(parsePressureBar(inputs.pressurePump2)),
     pumpActivation,
   });
 }
 
 function getDerivedAlarm(form: PumpRoomPlcInputs): DerivedAlarm {
-  const p1 = parseMa(form.pressurePump1);
-  const p2 = parseMa(form.pressurePump2);
+  const p1 = parsePressureBar(form.pressurePump1);
+  const p2 = parsePressureBar(form.pressurePump2);
   const conditions: string[] = [];
   let level: DerivedAlarmLevel = 'clear';
 
-  if (p1 >= PRESSURE_DANGER_MA || p2 >= PRESSURE_DANGER_MA) {
+  if (p1 >= PRESSURE_DANGER_BAR || p2 >= PRESSURE_DANGER_BAR) {
     conditions.push('High Pressure');
     level = 'danger';
-  } else if (p1 >= PRESSURE_WARNING_MA || p2 >= PRESSURE_WARNING_MA) {
+  } else if (p1 >= PRESSURE_WARNING_BAR || p2 >= PRESSURE_WARNING_BAR) {
     conditions.push('Pressure Warning');
     level = 'warning';
   }
 
-  if (p1 < PRESSURE_LOW_MA || p2 < PRESSURE_LOW_MA) {
+  if (p1 < PRESSURE_LOW_BAR || p2 < PRESSURE_LOW_BAR) {
     conditions.push('Low Pressure');
     level = 'danger';
   }
@@ -337,8 +341,8 @@ function PressureBlockBar({ bar, tone }: { bar: number; tone: SignalTone }) {
         const segBar = i + 1;
         const filled = bar >= segBar - 0.5;
         const segTone: SignalTone =
-          segBar > PRESSURE_DANGER_MA - MA_MIN ? 'danger'
-          : segBar > PRESSURE_WARNING_MA - MA_MIN ? 'warning'
+          segBar > PRESSURE_DANGER_BAR ? 'danger'
+          : segBar > PRESSURE_WARNING_BAR ? 'warning'
           : 'normal';
         const palette = getSignalPalette(segTone);
         return (
@@ -365,14 +369,13 @@ function PressureSlider({
 }) {
   // Inject-only: the slider value is the single source of truth (no gateway
   // echo to reconcile against), so tone / chip / bar all read from it directly.
-  const draftMa = parseMa(value);
-  const tone = getPressureTone(draftMa);
+  const draftBar = parsePressureBar(value);
+  const tone = getPressureTone(draftBar);
   const palette = getSignalPalette(tone);
-  const bar  = maToPressureBar(draftMa);
   const statusLabel = tone === 'danger'
-    ? `≥ ${PRESSURE_DANGER_MA} mA`
+    ? `>= ${PRESSURE_DANGER_BAR} bar`
     : tone === 'warning'
-    ? `≥ ${PRESSURE_WARNING_MA} mA`
+    ? `>= ${PRESSURE_WARNING_BAR} bar`
     : 'Normal';
   return (
     <View style={stationStyles.fieldBlock}>
@@ -380,36 +383,36 @@ function PressureSlider({
         <Text style={stationStyles.fieldLabel}>{label}</Text>
         <View style={[stationStyles.signalValueChip, { backgroundColor: palette.surface, borderColor: palette.border }]}>
           <View style={[stationStyles.signalValueDot, { backgroundColor: palette.accent }]} />
-          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatMa(draftMa)}</Text>
+          <Text style={[stationStyles.signalValueText, { color: palette.text }]}>{formatPressureBar(draftBar)}</Text>
         </View>
       </View>
       <View style={[stationStyles.signalSliderShell, tone === 'normal' && stationStyles.signalSliderShellNormal, tone === 'warning' && stationStyles.signalSliderShellWarning, tone === 'danger' && stationStyles.signalSliderShellDanger]}>
         <Slider
-          value={draftMa}
-          minimumValue={MA_MIN}
-          maximumValue={MA_MAX}
-          step={MA_STEP}
+          value={draftBar}
+          minimumValue={PRESSURE_MIN_BAR}
+          maximumValue={PRESSURE_MAX_BAR}
+          step={PRESSURE_STEP_BAR}
           minimumTrackTintColor={palette.accent}
           maximumTrackTintColor={palette.track}
           thumbTintColor={palette.accent}
           disabled={disabled}
-          onValueChange={(v) => onChange(formatMa(v))}
+          onValueChange={(v) => onChange(formatPressureBar(v))}
           style={stationStyles.pressureSlider}
         />
         <EngineeringSignalBands tone={tone} />
       </View>
       <View style={stationStyles.sliderRangeRow}>
-        <Text style={stationStyles.sliderRangeText}>4 mA</Text>
+        <Text style={stationStyles.sliderRangeText}>{PRESSURE_MIN_BAR} bar</Text>
         <View style={[stationStyles.signalStateBadge, { backgroundColor: palette.surface, borderColor: palette.border }]}>
           <Text style={[stationStyles.signalStateText, { color: palette.text }]}>{statusLabel}</Text>
         </View>
-        <Text style={stationStyles.sliderRangeText}>20 mA</Text>
+        <Text style={stationStyles.sliderRangeText}>{PRESSURE_MAX_BAR} bar</Text>
       </View>
       <View style={s.euDisplayRow}>
-        <Text style={s.euDisplayLabel}>Pressure</Text>
-        <Text style={[s.euDisplayValue, { color: palette.text }]}>{bar.toFixed(1)} bar</Text>
+        <Text style={s.euDisplayLabel}>Counter</Text>
+        <Text style={[s.euDisplayValue, { color: palette.text }]}>{pressureBarToCounter(draftBar)}</Text>
       </View>
-      <PressureBlockBar bar={bar} tone={tone} />
+      <PressureBlockBar bar={draftBar} tone={tone} />
     </View>
   );
 }
@@ -525,8 +528,8 @@ export default function PumpRoom() {
   const [nextPumpActivationValue, setNextPumpActivationValue] = useState<0 | 1>(1);
 
   // W[2] is held only after MQTT feedback confirms the remote activation/reset command.
-  const pt1Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump1));
-  const pt2Counter = pressureMaToCounter(parseMa(injectDraft.pressurePump2));
+  const pt1Counter = pressureBarToCounter(parsePressureBar(injectDraft.pressurePump1));
+  const pt2Counter = pressureBarToCounter(parsePressureBar(injectDraft.pressurePump2));
   const toPlcPacked = packInputs(injectDraft, remoteActivationValue);
 
   const flashInject = useCallback((message: string) => {
@@ -705,7 +708,7 @@ export default function PumpRoom() {
   const sendToPlcCommand = useCallback(
     async (
       kind: ToPlcPendingKind,
-      overrides: { pressurePump1Ma?: number; pressurePump2Ma?: number; pumpActivation?: number },
+      overrides: { pressurePump1Bar?: number; pressurePump2Bar?: number; pumpActivation?: number },
       snapshot: Omit<
         ToPlcCommandSnapshot,
         | 'baselineReceivedAt'
@@ -721,10 +724,12 @@ export default function PumpRoom() {
         return;
       }
 
-      const pressurePump1Ma = overrides.pressurePump1Ma ?? parseMa(injectDraftRef.current.pressurePump1);
-      const pressurePump2Ma = overrides.pressurePump2Ma ?? parseMa(injectDraftRef.current.pressurePump2);
-      const pressurePump1Counter = pressureMaToCounter(pressurePump1Ma);
-      const pressurePump2Counter = pressureMaToCounter(pressurePump2Ma);
+      const pressurePump1Bar =
+        overrides.pressurePump1Bar ?? parsePressureBar(injectDraftRef.current.pressurePump1);
+      const pressurePump2Bar =
+        overrides.pressurePump2Bar ?? parsePressureBar(injectDraftRef.current.pressurePump2);
+      const pressurePump1Counter = pressureBarToCounter(pressurePump1Bar);
+      const pressurePump2Counter = pressureBarToCounter(pressurePump2Bar);
       const packed = packToPlcCommand({
         pressurePump1Counter,
         pressurePump2Counter,
@@ -742,6 +747,16 @@ export default function PumpRoom() {
         },
         timeoutMs: DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
         onTimeout: (command) => {
+          if (
+            command.snapshot.kind === 'pumpActivation' &&
+            command.snapshot.nextRemoteActivationValue === 0
+          ) {
+            setRemoteActivationValue(0);
+            setNextPumpActivationValue(1);
+            showCommandError(`${command.label} timed out. UI reset to 0.`);
+            return;
+          }
+
           rollbackToPlcCommand(command);
           showCommandError(`${command.label} timed out. Rolled back.`);
         },
@@ -798,7 +813,7 @@ export default function PumpRoom() {
     };
   }, []);
 
-  // Slider settle → persist + (if connected) publish the packed word. Offline it
+  // Slider settle -> persist + (if connected) publish the packed word. Offline it
   // stays local so you can watch the pack calculation without a broker.
   const updatePressureField = useCallback(
     (key: PumpRoomPlcInputKey, value: string) => {
@@ -809,9 +824,9 @@ export default function PumpRoom() {
         return;
       }
 
-      const nextMa = parseMa(value);
-      const nextFormattedValue = formatMa(nextMa);
-      const currentFormattedValue = formatMa(parseMa(injectDraftRef.current[key]));
+      const nextBar = parsePressureBar(value);
+      const nextFormattedValue = formatPressureBar(nextBar);
+      const currentFormattedValue = formatPressureBar(parsePressureBar(injectDraftRef.current[key]));
 
       if (currentFormattedValue === nextFormattedValue) {
         return;
@@ -824,7 +839,7 @@ export default function PumpRoom() {
         };
       }
 
-      const nextInputs = { ...injectDraftRef.current, [key]: formatMa(nextMa) };
+      const nextInputs = { ...injectDraftRef.current, [key]: nextFormattedValue };
       setInjectDraft(nextInputs);
 
       const existing = pressureDebounceRef.current[key];
@@ -848,7 +863,9 @@ export default function PumpRoom() {
 
         void sendToPlcCommand(
           key,
-          key === 'pressurePump1' ? { pressurePump1Ma: nextMa } : { pressurePump2Ma: nextMa },
+          key === 'pressurePump1'
+            ? { pressurePump1Bar: nextBar }
+            : { pressurePump2Bar: nextBar },
           {
             kind: key,
             pressureField: key,
@@ -916,7 +933,7 @@ export default function PumpRoom() {
   }, [pendingToPlcCommandMap]);
 
   const fromPlcStatusHint = useMemo(() => {
-    if (isSimulation) return 'Mode simulasi — MQTT offline. Tekan channel untuk ON/OFF; desimal & bit terhitung otomatis.';
+    if (isSimulation) return 'MQTT offline.';
     return null;
   }, [isSimulation]);
 
@@ -924,7 +941,7 @@ export default function PumpRoom() {
     if (lastCommandError) return lastCommandError;
     if (injectFlash) return injectFlash;
     if (latestPendingToPlcCommand) return `${latestPendingToPlcCommand.label} · waiting for gateway.`;
-    if (isSimulation) return 'Mode simulasi — TO_PLC dihitung lokal, tidak dikirim.';
+    if (isSimulation) return 'Local Save';
     return null;
   }, [injectFlash, isSimulation, lastCommandError, latestPendingToPlcCommand]);
 
@@ -984,7 +1001,7 @@ export default function PumpRoom() {
               onPress={triggerPumpActivation}
             />
 
-            {/* PT-001 / PT-002 inject in 4–20 mA (W0 / W1) */}
+            {/* PT-001 / PT-002 inject in bar (W0 / W1) */}
             <View style={stationStyles.sectionCard}>
               {PUMP_ROOM_PLC_FIELDS.map((field) => (
                 <PressureSlider

@@ -201,8 +201,8 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
 // TO PLC - SIEMENS (7193) is a packed uint64 exposed as one counter value.
 // Word order (W[0] = least-significant word), per docs/DO.md:
 export const TO_PLC_WORD_INDEX = {
-  pressurePump1: 0, // W[0] — PT1 set-point counter (mA × 10)
-  pressurePump2: 1, // W[1] — PT2 set-point counter (mA × 10)
+  pressurePump1: 0, // W[0] — PT1 set-point counter
+  pressurePump2: 1, // W[1] — PT2 set-point counter
   pumpActivation: 2, // W[2] — Pump Activation, momentary (1 = fire, else 0)
   spare: 3, // W[3] — reserved, always 0
 } as const;
@@ -619,13 +619,8 @@ export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPay
 }
 
 // The PLC expects the pressure set-point in the engineering unit **bar**, not the
-// raw 4–20 mA loop current (the UI still shows the mA slider; only the value we
-// send changed). The transmitter maps 4 mA → 0 bar, 20 mA → 16 bar, so
-// `bar = mA − 4`. A set-point word is a Modbus unsigned integer, so a fractional
-// bar cannot be stored directly — encode it as (bar × 10) before packing into the
-// TO PLC word (W[0] / W[1]); the 0.1-bar slider resolution survives the round
-// trip. Inject-only — there is no read-back to decode.
-export const PRESSURE_COUNTER_SCALE = 10;
+// raw 4–20 mA loop current. The transmitter maps 4 mA → 0 bar, 20 mA → 16 bar,
+// so `bar = mA - 4`. Counter words are sent 1:1: UI value 1 bar becomes word 1.
 export const PRESSURE_MA_ZERO_BAR = 4; // 4 mA loop current corresponds to 0 bar
 
 export function pressureMaToBar(mA: number) {
@@ -633,7 +628,7 @@ export function pressureMaToBar(mA: number) {
 }
 
 export function pressureBarToCounter(bar: number) {
-  return Math.round(bar * PRESSURE_COUNTER_SCALE);
+  return Math.round(bar);
 }
 
 // Convenience: mA → bar → counter, the full path used when packing a slider value.
