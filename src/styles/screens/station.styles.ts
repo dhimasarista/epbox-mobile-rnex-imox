@@ -434,8 +434,9 @@ export const styles = StyleSheet.create({
   },
   alarmCommandButton: {
     minHeight: 48,
-    minWidth: '48%',
+    flexBasis: '48%',
     flexGrow: 1,
+    flexShrink: 1,
     borderRadius: AppRadii.md,
     paddingHorizontal: AppSpacing.md,
     paddingVertical: AppSpacing.md,

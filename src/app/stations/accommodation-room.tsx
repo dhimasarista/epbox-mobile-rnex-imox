@@ -39,14 +39,15 @@ const ACCOMMODATION_TEMP_MAX_C = 120;
 const COMMAND_DEBOUNCE_MS = 250;
 
 type AccommodationEditableKey = 'smokeDetected' | 'temperatureValue';
+type AccommodationEditableValue = AccommodationRoomInputs[AccommodationEditableKey];
 type CounterCommandSnapshot = {
   kind: 'counter';
   field: AccommodationEditableKey;
   counterId: number;
   expectedMetricValue: number;
   baselineReceivedAt: number | null;
-  previousConfirmedValue: AccommodationRoomInputs[AccommodationEditableKey];
-  previousDraftValue: AccommodationRoomInputs[AccommodationEditableKey];
+  previousConfirmedValue: AccommodationEditableValue;
+  previousDraftValue: AccommodationEditableValue;
 };
 type AlarmCommandSnapshot = {
   kind: 'alarm';
@@ -560,18 +561,14 @@ function AlarmCommandButton({
   label,
   tone,
   disabled,
-  countdownSeconds,
   onPress,
 }: {
   label: string;
   tone: 'primary' | 'secondary';
   disabled: boolean;
-  // Seconds left on the fallback window while this command is in flight (5…0),
-  // or null when idle. Shown as a live countdown so the wait is transparent.
   countdownSeconds?: number | null;
   onPress: () => void;
 }) {
-  const isCountingDown = typeof countdownSeconds === 'number';
   return (
     <TouchableOpacity
       activeOpacity={0.9}
@@ -589,7 +586,7 @@ function AlarmCommandButton({
             ? styles.alarmCommandButtonTextPrimary
             : styles.alarmCommandButtonTextSecondary,
         ]}>
-        {isCountingDown ? `${label} · ${countdownSeconds}s` : label}
+        {label}
       </Text>
     </TouchableOpacity>
   );
@@ -649,7 +646,13 @@ function AccommodationAlarmSection({
             isAlarmOff && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' },
           ]}>
           <View style={styles.statusSegmentTopRow}>
-            <View style={[styles.statusSegmentLamp, { backgroundColor: AppColors.success }, isAlarmOff && styles.statusSegmentLampActive]} />
+            <View
+              style={[
+                styles.statusSegmentLamp,
+                { backgroundColor: isAlarmOff ? AppColors.success : AppColors.border },
+                isAlarmOff && styles.statusSegmentLampActive,
+              ]}
+            />
             <Text style={styles.statusSegmentCode}>00</Text>
           </View>
           <View style={[styles.statusSegmentCap, isAlarmOff && styles.statusSegmentCapActive]}>
@@ -666,7 +669,13 @@ function AccommodationAlarmSection({
             isAlarmOn && { backgroundColor: AppColors.surfaceError, borderColor: '#F4B7B7' },
           ]}>
           <View style={styles.statusSegmentTopRow}>
-            <View style={[styles.statusSegmentLamp, { backgroundColor: AppColors.error }, isAlarmOn && styles.statusSegmentLampActive]} />
+            <View
+              style={[
+                styles.statusSegmentLamp,
+                { backgroundColor: isAlarmOn ? AppColors.error : AppColors.border },
+                isAlarmOn && styles.statusSegmentLampActive,
+              ]}
+            />
             <Text style={styles.statusSegmentCode}>01</Text>
           </View>
           <View style={[styles.statusSegmentCap, isAlarmOn && styles.statusSegmentCapActive]}>
@@ -685,7 +694,13 @@ function AccommodationAlarmSection({
             isSirenOn && { backgroundColor: '#FFF4DB', borderColor: '#F2D17A' },
           ]}>
           <View style={styles.statusSegmentTopRow}>
-            <View style={[styles.statusSegmentLamp, { backgroundColor: AppColors.warning }, isSirenOn && styles.statusSegmentLampActive]} />
+            <View
+              style={[
+                styles.statusSegmentLamp,
+                { backgroundColor: isSirenOn ? AppColors.warning : AppColors.border },
+                isSirenOn && styles.statusSegmentLampActive,
+              ]}
+            />
             <Text style={styles.statusSegmentCode}>SRN</Text>
           </View>
           <View style={[styles.statusSegmentCap, isSirenOn && styles.statusSegmentCapActive]}>
@@ -836,11 +851,33 @@ export default function AccommodationRoom() {
   const hasHydratedRef = useRef(false);
   const temperatureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const temperatureSnapshotRef = useRef<{
-    previousConfirmedValue: AccommodationRoomInputs[AccommodationEditableKey];
-    previousDraftValue: AccommodationRoomInputs[AccommodationEditableKey];
+    previousConfirmedValue: AccommodationEditableValue;
+    previousDraftValue: AccommodationEditableValue;
   } | null>(null);
   const commandErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
+  const latestMetricsValuesRef = useRef<Partial<Record<AccommodationEditableKey, AccommodationEditableValue>>>({});
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
+  const metricsState = useMemo(
+    () => (metricsTopic.payload ? getAccommodationRoomMetricsState(metricsTopic.payload) : null),
+    [metricsTopic.payload]
+  );
+
+  useEffect(() => {
+    if (!metricsState) {
+      return;
+    }
+
+    latestMetricsValuesRef.current = {
+      ...latestMetricsValuesRef.current,
+      ...(metricsState.temperatureValue !== null
+        ? { temperatureValue: metricsState.temperatureValue }
+        : {}),
+      ...(metricsState.smokeDetected !== null ? { smokeDetected: metricsState.smokeDetected } : {}),
+    };
+  }, [metricsState]);
 
   const showCommandError = useCallback((message: string) => {
     setLastCommandError(message);
@@ -858,26 +895,30 @@ export default function AccommodationRoom() {
   const rollbackCounterCommand = useCallback(
     (command: PendingCommandState<CounterCommandSnapshot>) => {
       const { field, previousConfirmedValue, previousDraftValue } = command.snapshot;
+      const latestMetricValue =
+        statusRef.current === 'connected' ? latestMetricsValuesRef.current[field] : undefined;
+      const rollbackConfirmedValue = latestMetricValue ?? previousConfirmedValue;
+      const rollbackDraftValue = latestMetricValue ?? previousDraftValue;
 
       if (field === 'temperatureValue') {
         setDraftForm((current) => ({
           ...current,
-          temperatureValue: previousDraftValue as string,
+          temperatureValue: rollbackDraftValue as string,
         }));
         setConfirmedForm((current) => ({
           ...current,
-          temperatureValue: previousConfirmedValue as string,
+          temperatureValue: rollbackConfirmedValue as string,
         }));
         return;
       }
 
       setDraftForm((current) => ({
         ...current,
-        smokeDetected: previousDraftValue as boolean,
+        smokeDetected: rollbackDraftValue as boolean,
       }));
       setConfirmedForm((current) => ({
         ...current,
-        smokeDetected: previousConfirmedValue as boolean,
+        smokeDetected: rollbackConfirmedValue as boolean,
       }));
     },
     []
@@ -1141,11 +1182,10 @@ export default function AccommodationRoom() {
   }, [clearTemperatureDebounce, resolveAllCommands, rollbackCounterCommand, status]);
 
   useEffect(() => {
-    if (!metricsTopic.payload) {
+    if (!metricsState) {
       return;
     }
 
-    const metricsState = getAccommodationRoomMetricsState(metricsTopic.payload);
     const nextTemperatureMetricValue =
       metricsState.temperatureNumber === null ? null : Math.round(metricsState.temperatureNumber);
     const nextSmokeMetricValue =
@@ -1240,7 +1280,7 @@ export default function AccommodationRoom() {
     }, 0);
 
     return () => clearTimeout(processMetricsTimer);
-  }, [isCommandPending, metricsReceivedAt, metricsTopic.payload, pendingCommandMap, resolveCommand]);
+  }, [isCommandPending, metricsReceivedAt, metricsState, pendingCommandMap, resolveCommand]);
 
   useEffect(() => {
     if (metricsReceivedAt === null) {

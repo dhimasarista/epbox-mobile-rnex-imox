@@ -505,8 +505,7 @@ export default function PumpRoom() {
   >({});
   const hasHydratedRef = useRef(false);
   const derivedAlarm = getDerivedAlarm(injectDraft);
-  // Since the packed TO PLC word (7193) has no per-field echo, a successful
-  // publish (or a simulation) just flashes a transient note for ~2 s.
+  // Command success/failure is surfaced as a transient note without blocking navigation.
   const [injectFlash, setInjectFlash] = useState<string | null>(null);
   const injectFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commandErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -613,6 +612,10 @@ export default function PumpRoom() {
         command.snapshot.baselineReceivedAt === null
           ? metricsReceivedAt >= command.startedAt
           : metricsReceivedAt > command.snapshot.baselineReceivedAt;
+
+      if (command.snapshot.kind === 'pumpActivation') {
+        return isFresh;
+      }
 
       return isFresh && command.snapshot.expectedPacked === roundedToPlcValue;
     });
@@ -778,6 +781,11 @@ export default function PumpRoom() {
 
       const nextMa = parseMa(value);
       const nextFormattedValue = formatMa(nextMa);
+      const currentFormattedValue = formatMa(parseMa(injectDraftRef.current[key]));
+
+      if (currentFormattedValue === nextFormattedValue) {
+        return;
+      }
 
       if (!pressureSnapshotRef.current[key]) {
         pressureSnapshotRef.current[key] = {
@@ -828,20 +836,49 @@ export default function PumpRoom() {
   // Momentary: fire once with W[2] = 1. The pulse lights up W2 in the grid either
   // way; offline it just shows the packed value instead of publishing.
   const firePumpActivation = useCallback(() => {
+    const commandId = getToPlcCommandId('pumpActivation');
+
+    if (isToPlcCommandPending(commandId)) {
+      showCommandError('Pump Activation is already waiting for gateway response.');
+      return;
+    }
+
     pulsePumpActivation();
     if (status !== 'connected') {
       flashInject(`SIM — Pump Activation → ${packInputs(injectDraftRef.current, 1)}`);
       return;
     }
-    void publishToPlc({ pumpActivation: 1 })
-      .then(() => {
-        setLastCommandError(null);
-        flashInject('Pump Activation sent → PLC');
-      })
-      .catch((err: unknown) => {
-        setLastCommandError(err instanceof Error ? err.message : 'Pump Activation failed.');
-      });
-  }, [flashInject, publishToPlc, pulsePumpActivation, status]);
+    void sendToPlcCommand(
+      'pumpActivation',
+      { pumpActivation: 1 },
+      {
+        kind: 'pumpActivation',
+        successMessage: 'Pump Activation sent → PLC',
+      }
+    );
+  }, [
+    flashInject,
+    isToPlcCommandPending,
+    pulsePumpActivation,
+    sendToPlcCommand,
+    showCommandError,
+    status,
+  ]);
+
+  const isPumpActivationPending = isToPlcCommandPending(getToPlcCommandId('pumpActivation'));
+  const getPressurePending = useCallback(
+    (key: PumpRoomPlcInputKey) => isToPlcCommandPending(getToPlcCommandId(key)),
+    [isToPlcCommandPending]
+  );
+  const latestPendingToPlcCommand = useMemo(() => {
+    const pendingCommands = Object.values(pendingToPlcCommandMap);
+
+    if (pendingCommands.length === 0) {
+      return null;
+    }
+
+    return [...pendingCommands].sort((left, right) => left.startedAt - right.startedAt).pop() ?? null;
+  }, [pendingToPlcCommandMap]);
 
   const fromPlcStatusHint = useMemo(() => {
     if (isSimulation) return 'Mode simulasi — MQTT offline. Tekan channel untuk ON/OFF; desimal & bit terhitung otomatis.';
@@ -851,9 +888,10 @@ export default function PumpRoom() {
   const injectStatusHint = useMemo(() => {
     if (lastCommandError) return lastCommandError;
     if (injectFlash) return injectFlash;
+    if (latestPendingToPlcCommand) return `${latestPendingToPlcCommand.label} · waiting for gateway.`;
     if (isSimulation) return 'Mode simulasi — TO_PLC dihitung lokal, tidak dikirim.';
     return null;
-  }, [injectFlash, isSimulation, lastCommandError]);
+  }, [injectFlash, isSimulation, lastCommandError, latestPendingToPlcCommand]);
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
@@ -904,7 +942,11 @@ export default function PumpRoom() {
               packed={toPlcPacked}
             />
             {/* Pump Activation — momentary command (W2) */}
-            <PumpActivationButton simulation={isSimulation} onFire={firePumpActivation} />
+            <PumpActivationButton
+              simulation={isSimulation}
+              disabled={isPumpActivationPending}
+              onFire={firePumpActivation}
+            />
 
             {/* PT-001 / PT-002 inject in 4–20 mA (W0 / W1) */}
             <View style={stationStyles.sectionCard}>
@@ -913,6 +955,7 @@ export default function PumpRoom() {
                   key={field.key}
                   label={field.label}
                   value={injectDraft[field.key]}
+                  disabled={getPressurePending(field.key)}
                   onChange={(v) => updatePressureField(field.key, v)}
                 />
               ))}
@@ -1064,6 +1107,7 @@ const s = StyleSheet.create({
     paddingHorizontal: AppSpacing.lg,
   },
   pumpActBtnSim: { backgroundColor: AppColors.error },
+  pumpActBtnDisabled: { opacity: 0.55 },
   pumpActBtnText: { fontSize: 14, fontWeight: '800', color: AppColors.textInverse, letterSpacing: 0.3 },
 
   derivedAlarmCard: {
