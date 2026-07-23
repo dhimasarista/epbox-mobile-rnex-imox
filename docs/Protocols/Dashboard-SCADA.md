@@ -28,10 +28,16 @@ payloads, the **encoding rules**, and how to **probe** the live gateway.
    confirmed value  →  chip / tone / bar
 ```
 
-The app is **optimistic + reconciled**: it shows a local *draft* immediately,
-publishes a command, then holds the draft until the gateway **echoes** the value
-back on `metrics`. The *confirmed* value (color, chip, bar) always follows the
-gateway echo, never the raw draft.
+The app is **optimistic + reconciled + time-boxed**: it shows a local *draft*
+immediately, publishes a command, then holds the draft until the gateway **echoes**
+the value back on `metrics`. The *confirmed* value (color, chip, bar) always
+follows the gateway echo, never the raw draft. Every write is tracked by the shared
+**`usePendingCommand`** hook (`src/hooks/use-pending-command.ts`): if no matching
+echo arrives within **5 s** (`DEFAULT_PENDING_COMMAND_TIMEOUT_MS`) the command is
+declared lost and the affected state **rolls back** to the snapshot taken at send —
+so a control never gets stuck disabled. Both station screens now use this, and the
+pump-room TO PLC tab is no longer fire-and-forget: it **reads 7193 back** and
+reconciles PT1 / PT2 / Remote Activation against the gateway echo (see §5.2, §7).
 
 ---
 
@@ -43,8 +49,18 @@ by `getMqttRuntimeTransport()`.
 
 | Key | Topic | Direction | QoS / retain |
 |---|---|---|---|
-| `gatewayMetrics` | `epbox/imox/demo/site/batam/edge/cg-uwp40-01/metrics` | subscribe | 0 / false |
+| `gatewayMetrics` | `…/cg-uwp40-01/metrics` **+** `…/pressure-transmitter` **+** `…/acc-room/metrics` | subscribe | 0 / false |
 | `gatewayOtCommand` | `epbox/imox/demo/site/batam/edge/cg-uwp40-01/cmd/ot` | publish | 0 / false |
+| `appLatencyPing` | `…/cg-uwp40-01/app/latency-ping` | duplex (loopback) | 0 / false |
+
+The gateway now **splits its metrics across three sibling topics** (same payload
+shape, disjoint devices by id): `…/metrics` carries **FROM PLC 6563 + TO PLC 7193**,
+`…/pressure-transmitter` carries 6983 / 7019, `…/acc-room/metrics` carries smoke /
+temperature / alarm / zone. The client subscribes to all three
+(`GATEWAY_METRICS_SUBSCRIBE_TOPICS`) and merges them by device id into the single
+`gatewayMetrics` store — so consumers still read one snapshot. `appLatencyPing` is
+an app-owned loopback probe (publish + subscribe) used to measure broker
+round-trip latency in ms; it never reaches the gateway/PLC.
 
 ### metrics payload
 
@@ -88,9 +104,9 @@ type in [`MQTT.md`](./MQTT.md).
 | Alarm | Alarm | 3667 | `accommodationRoom.alarm.deviceId` | `accommodation-room.tsx` |
 | Zone temperature | Zone temp | 4147 | `accommodationRoom.zoneTemperature.deviceId` | `accommodation-room.tsx` |
 | FROM PLC - SIEMENS (DO status, read) | Counter | 6563 | `fireFightingRoom.fromPlc.deviceId` | `pump-room.tsx` (FROM PLC tab) |
-| TO PLC - SIEMENS (packed write) | Counter | 7193 | `fireFightingRoom.toPlc.deviceId` | `pump-room.tsx` (TO PLC tab) |
-| Pressure Transmitter - Pump 1 | Counter | 6983 | — (inject-only, packed into 7193 `W[0]`) | `pump-room.tsx` (TO PLC tab) |
-| Pressure Transmitter - Pump 2 | Counter | 7019 | — (inject-only, packed into 7193 `W[1]`) | `pump-room.tsx` (TO PLC tab) |
+| TO PLC - SIEMENS (packed write **+ read-back**) | Counter | 7193 | `fireFightingRoom.toPlc.deviceId` | `pump-room.tsx` (TO PLC tab) |
+| Pressure Transmitter - Pump 1 | Counter | 6983 | — (set-point packed into 7193 `W[0]`, read back from 7193) | `pump-room.tsx` (TO PLC tab) |
+| Pressure Transmitter - Pump 2 | Counter | 7019 | — (set-point packed into 7193 `W[1]`, read back from 7193) | `pump-room.tsx` (TO PLC tab) |
 
 ---
 
@@ -107,30 +123,44 @@ type in [`MQTT.md`](./MQTT.md).
 - Alarm read-back: `Alarm status` (codes 1–6, see `ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS`) + `Siren status`.
 - Zone temperature is **read-only** on this screen (heating/cooling detail),
   parsed by `getAccommodationRoomZoneHeatingState` (status/setpoint/mode labels).
-- Alarm commands use a **5 s silent write-guard** per command; counter commands
-  clear only on a matching echo.
+- All accommodation controls (smoke / temperature `SetValue`, alarm
+  `Acknowledgement` / `Reset` / `ResetOn` / `ResetOff`) run through the shared
+  `usePendingCommand` hook: optimistic on press, resolved on a matching echo, and
+  **rolled back after the 5 s timeout** if nothing comes back.
 
 ### Pump Room — FROM PLC tab (`src/app/stations/pump-room.tsx`)
 
-**Read-only when connected.** The 14 DO channels are **received** from FROM PLC
-(6563) and bit-unpacked for display — the app never writes DO. When MQTT is
-offline the tab becomes a **simulation**: each channel is **tap-to-toggle**
+**Read-only when connected.** All **16 DO channels (bits 0–15)** are **received**
+from FROM PLC (6563) and bit-unpacked for display — the app never writes DO. When
+MQTT is offline the tab becomes a **simulation**: each channel is **tap-to-toggle**
 (ON/OFF), and the packed uint16 decimal + its bit string recompute live — so the
 calculation can be cross-checked with the PLC engineer without any typing.
+
+> Bits 14 / 15 (`pumpATripped` / `pumpBTripped`) are **display-only trip
+> feedbacks** — they are shown in the DO list but do **not** disable the PT-001 /
+> PT-002 controls (pressure can still be injected while a pump is tripped).
 
 ### Pump Room — TO PLC tab
 
 | Control | Function (id) | Command | Value |
 |---|---|---|---|
-| PT-001 slider | TO PLC (7193), word `W[0]` | `SetValue` | packed; PT1 = bar × 10 (see §6) |
-| PT-002 slider | TO PLC (7193), word `W[1]` | `SetValue` | packed; PT2 = bar × 10 (see §6) |
-| Pump Activation button | TO PLC (7193), word `W[2]` | `SetValue` | packed; momentary `1` (one-shot) |
+| PT-001 bar grid (0–16) | TO PLC (7193), word `W[0]` | `SetValue` | packed; PT1 counter = bar (1:1, see §6) |
+| PT-002 bar grid (0–16) | TO PLC (7193), word `W[1]` | `SetValue` | packed; PT2 counter = bar (1:1, see §6) |
+| Remote Activation / Reset button | TO PLC (7193), word `W[2]` | `SetValue` | packed; latched `1` (activate) / `0` (reset) |
 
-Pressure is **inject-only** — set-points packed into TO PLC `W[0]`/`W[1]`, no
-read-back (persisted locally; tone / bar / derived-alarm read from the slider).
-**Pump Activation** is a momentary command: the button fires one `SetValue` with
-`W[2] = 1`; it is never held or reset to 0 by the app (normal pressure writes send
-`W[2] = 0`). Offline, both just compute the packed value locally (no publish).
+Pressure is a **bar button grid (0–16 bar, integer steps)** — no mA slider. The
+selected bar goes 1:1 into `W[0]` / `W[1]` (§6). PT-001 / PT-002 and Remote
+Activation are all **read back** from 7193 and reconciled (§5.2): the confirmed
+value follows the gateway echo, and each control is disabled while its own command
+is pending.
+
+**Remote Activation is a latched toggle, not a pulse.** The button alternates
+between **Remote Activation** (writes `W[2] = 1`) and **Remote Reset** (writes
+`W[2] = 0`); the held value updates only after the gateway echoes it back. The next
+press's target is tracked by `nextPumpActivationValue`. Offline, pressure writes
+save locally and the toggle flips locally (no publish); PT-001/PT-002 tone, bar and
+the derived-alarm card read from the current draft. Derived-alarm thresholds (bar):
+low `< 2`, warning `≥ 7.5`, danger `≥ 10.2`.
 
 ---
 
@@ -140,15 +170,16 @@ The PLC is split across two registers (`docs/DO.md`) with **opposite directions*
 DO is only received, everything the app sends goes to TO PLC:
 
 ```
-FROM PLC (6563)  read-only   1×uint16   W[0] = DO output status  → bit-unpacked
-TO PLC   (7193)  write only  4×uint16   W[0] = PT1 counter (bar×10)  (uint64 packed)
-                                        W[1] = PT2 counter (bar×10)
-                                        W[2] = Pump Activation (momentary 1)
-                                        W[3] = spare (kept 0)
+FROM PLC (6563)  read-only        1×uint16   W[0] = DO output status  → bit-unpacked
+TO PLC   (7193)  write + read-back 4×uint16   W[0] = PT1 counter (bar, 1:1)  (uint64 packed)
+                                              W[1] = PT2 counter (bar, 1:1)
+                                              W[2] = Remote Activation (latched 1/0)
+                                              W[3] = spare (kept 0)
 ```
 
-The DO word is re-based to **bit 0** — channel 1 → bit 0, up to bit 13; bits
-14..15 spare. Every TO PLC write publishes a single packed value:
+The DO word is re-based to **bit 0** — channel 1 → bit 0, through **bit 15**; all
+16 bits are functional now (bits 14/15 are the pump-trip feedbacks, no longer
+spare). Every TO PLC write publishes a single packed value:
 
 ```
 SetValue(7193) = W0 + W1·2^16 + W2·2^32     // W3 = 0, so value < 2^48 (JS-safe)
@@ -169,7 +200,7 @@ Decoding is a two-layer job — **by words**, then **by bit**:
 FROM PLC (6563) is 1 word → by-bit only (receive). TO PLC (7193) is 4 words →
 by-words (send). Source of the mapping: [`docs/DO.md`](../DO.md).
 
-### Digital Outputs — bits 0–13 (received status)
+### Digital Outputs — bits 0–15 (received status)
 
 | Bit | Key | Label |
 |---|---|---|
@@ -187,19 +218,21 @@ by-words (send). Source of the mapping: [`docs/DO.md`](../DO.md).
 | 11 | pumpCRunning | Pump C Running |
 | 12 | localMode | Local Mode |
 | 13 | remoteMode | Remote Mode |
-| 14–15 | — | *spare* |
+| 14 | pumpATripped | Pump A Tripped *(display-only)* |
+| 15 | pumpBTripped | Pump B Tripped *(display-only)* |
 
 **Read path (FROM PLC 6563):** the DO channels are **display-only**. The counter
-value is rounded, masked to uint16, and bit-unpacked into the 14 indicators — the
+value is rounded, masked to uint16, and bit-unpacked into the 16 indicators — the
 app never writes DO. Offline, the word is built by tapping channels on/off
 (`toggleDoChannel` → `setChannelBit`) instead of coming from metrics.
 
-**Write path (TO PLC 7193):** a pressure slider publishes
-`publishToPlc({ pressurePumpNMa })`; the Pump Activation button publishes
-`publishToPlc({ pumpActivation: 1 })` once (momentary). Unchanged words are always
-pulled from the latest draft (`injectDraftRef`) so no word is clobbered, and
-`pumpActivation` defaults to `0` on ordinary writes so the one-shot never sticks
-on. Offline, writes are computed locally (no publish).
+**Write path (TO PLC 7193):** each control sends one packed `SetValue(7193)` via
+`sendToPlcCommand`. A pressure change packs the new bar into its word; the Remote
+Activation / Reset button packs `W[2] = 1` or `0`. Every write carries all 4 words —
+unchanged words are pulled from the latest draft (`injectDraftRef`) and the current
+latched `remoteActivationValue`, so no word is clobbered. The command then waits for
+the 7193 read-back to confirm it (§5.2). Offline, writes are computed/held locally
+(no publish).
 
 ### 5.1 Sending a value — the 4-word packing, worked through
 
@@ -218,19 +251,20 @@ number in "base 65536", with `W[0]` as the least-significant word:
 value = W0 + W1·2^16 + W2·2^32 + W3·2^48
 ```
 
-**Worked example** — set PT1 = 11.4 mA (7.4 bar), PT2 = 8.0 mA (4.0 bar), and fire
-Pump Activation:
+**Worked example** — set PT1 = 7 bar, PT2 = 4 bar, with Remote Activation latched
+on:
 
 | Word | Raw | Meaning | Contribution |
 |---|---|---|---|
-| `W0` | `74` | PT1 7.4 bar × 10 | `74` |
-| `W1` | `40` | PT2 4.0 bar × 10 | `40 × 65536 = 2,621,440` |
-| `W2` | `1` | Pump Activation (momentary) | `1 × 2^32 = 4,294,967,296` |
+| `W0` | `7` | PT1 7 bar (1:1) | `7` |
+| `W1` | `4` | PT2 4 bar (1:1) | `4 × 65536 = 262,144` |
+| `W2` | `1` | Remote Activation (latched) | `1 × 2^32 = 4,294,967,296` |
 | `W3` | `0` | spare | `0` |
 
-→ `value = 4,297,588,810`, published as
-`{"id":7193,"cmd":"SetValue","value":4297588810}`. The gateway splits it back to
-`[74, 40, 1, 0]`. An ordinary pressure write sends `W2 = 0` → `[74, 40, 0, 0]`.
+→ `value = 4,295,229,447`, published as
+`{"id":7193,"cmd":"SetValue","value":4295229447}`. The gateway splits it back to
+`[7, 4, 1, 0]`. A Remote Reset (or the read-back after one) carries `W2 = 0` →
+`[7, 4, 0, 0]`.
 
 **Two rules that make this safe:**
 
@@ -239,9 +273,9 @@ Pump Activation:
    That's why `joinWords` / `splitWords` use `Math.floor` + `/` + `*`, not shifts.
 2. **Never clobber the other words.** One `SetValue` overwrites the *whole*
    register, so every write must carry all 4 words. A control changing one field
-   pulls the rest from the latest draft (`injectDraftRef.current` in
-   `publishToPlc`), and `pumpActivation` defaults to `0`. Otherwise a pressure
-   write would fire Pump Activation, or leave it latched on.
+   pulls the rest from the latest draft (`injectDraftRef.current`) and the current
+   latched `remoteActivationValue`. Otherwise a pressure write would flip Remote
+   Activation, or a toggle would wipe the pressure set-points.
 
 **By words, combined per write** — e.g. a pressure change:
 
@@ -254,26 +288,56 @@ slider → packToPlcCommand (by words → W0 + W1 + W2)
 (`2^53 ≈ 9.0e15`). As long as `W3` (spare) stays 0, the value is < `2^48`, so a
 plain `number` is exact. If W3 ever carries high bits, switch to `BigInt`.
 
+### 5.2 Optimistic write → 5 s timeout → rollback, with 7193 read-back
+
+Every TO PLC write is tracked as a **pending command** (`usePendingCommand`, ids
+`to-plc:pressurePump1` / `to-plc:pressurePump2` / `to-plc:pumpActivation`). The
+control that issued it is disabled while pending. Resolution is driven purely by the
+**7193 read-back** in the metrics stream:
+
+- **Success.** On each metrics snapshot the app unpacks `value(7193)` back to its 4
+  words. A pressure command is acked when the echo is *fresh* (`receivedAt` past the
+  send) **and** the whole packed value equals what it sent (`expectedPacked ===
+  round(value(7193))`); a Remote Activation command is acked as soon as a fresh echo
+  arrives. On ack the confirmed pressure / latched `remoteActivationValue` are
+  committed from the read-back and the pending entry clears.
+- **Reconcile when idle.** For any field with **no** pending command, the confirmed
+  value simply *follows* the read-back — PT1/PT2 bar and Remote Activation track
+  whatever 7193 currently reports, so a write from another client (or the PLC) is
+  reflected without a local edit.
+- **Timeout (5 s).** If no qualifying echo arrives within
+  `DEFAULT_PENDING_COMMAND_TIMEOUT_MS`, the command is lost: pressure rolls its draft
+  **and** confirmed value back to the pre-send snapshot; Remote Activation reverts to
+  its previous latched value. The pump-room surfaces this as a brief status hint
+  (`… timed out. Rolled back.`) that auto-clears — it does not block.
+- **Disconnect.** Dropping out of `connected` resolves all in-flight commands via the
+  rollback path, so nothing stays stuck pending.
+
+A pressure control is disabled **only while its own write is pending**; the
+pump-trip DO bits (14/15) are display-only and never block a pressure inject.
+
 ---
 
 ## 6. Pressure transmitter bar encoding
 
-The PLC expects the set-point in the engineering unit **bar**, not the raw 4–20 mA
-loop current. The transmitter maps `4 mA → 0 bar`, `20 mA → 16 bar`, so
-`bar = mA − 4`. The UI still shows the mA slider unchanged — only the value packed
-into `W[0]` / `W[1]` changed. Each word is an **unsigned integer** and cannot store
-a fractional bar, so the app encodes it before packing (inject-only, write only):
+The PLC expects the set-point in the engineering unit **bar**. The transmitter maps
+`4 mA → 0 bar`, `20 mA → 16 bar` (`bar = mA − 4`), but the UI now works **directly in
+bar** — a button grid of integer steps `0…16` (`PRESSURE_MIN_BAR` / `PRESSURE_MAX_BAR`),
+no mA slider. The selected bar goes into `W[0]` / `W[1]` **1:1** — the counter word
+*is* the bar value:
 
 ```
-write:  counter = round((mA − 4) × 10)   // 11.4 mA → 7.4 bar → 74 in W[0]/W[1]
+write:  counter = round(bar)     // 7 bar → 7 in W[0]/W[1]  (read-back: bar = word)
 ```
 
-- Scale constant: `PRESSURE_COUNTER_SCALE = 10`; zero point `PRESSURE_MA_ZERO_BAR = 4`.
-- Helpers: `pressureMaToBar` → `pressureBarToCounter` (composed as
-  `pressureMaToCounter`) in `src/lib/mqtt-topics.ts`.
+- Zero point `PRESSURE_MA_ZERO_BAR = 4` (kept only so a value typed with a `mA`
+  suffix is converted via `bar = mA − 4`; the grid itself is already in bar).
+- Helper: `pressureBarToCounter(bar) = Math.round(bar)` in `src/lib/mqtt-topics.ts`
+  (the earlier `× 10` scale was removed — the counter is raw bar now).
 
-> ⚠️ Confirm the PLC interprets `W[0]/W[1]` as bar × 10 with the probe (§9) before
-> trusting this on a live gateway — if it expects raw bar, drop the scale to 1.
+> ⚠️ Confirm the PLC reads `W[0]/W[1]` as **raw bar** (1:1) with the probe (§9)
+> before trusting a live gateway — if it actually expects bar × 10, restore the
+> scale in `pressureBarToCounter`.
 
 ---
 
@@ -282,29 +346,31 @@ write:  counter = round((mA − 4) × 10)   // 11.4 mA → 7.4 bar → 74 in W[0
 | Concern | Rule |
 |---|---|
 | DO status (FROM PLC) | Receive-only — bit-unpacked from 6563 metrics for display; the app never writes DO, so nothing to reconcile. |
-| Pressure (inject-only) | No echo/reconcile — the slider value is authoritative and persisted locally. |
-| Pump Activation | Momentary one-shot — publishes `W[2]=1` once; no ack, next write sends `W[2]=0`. |
-| Counter ack (accommodation) | Pending clears when metrics echo matches expected (temperature: exact int). |
-| Alarm ack | Pending clears when metrics arrive after the send, or after a 5 s silent guard. |
-| Offline → simulation | With MQTT down the pump room computes pack/unpack locally (FROM PLC word built by tapping channels on/off, TO PLC shown but not published). |
+| Pressure (TO PLC W0/W1) | Optimistic + read-back: confirmed value follows the 7193 echo; while a write is pending it acks on `expectedPacked === round(value(7193))` and **rolls back after 5 s** if unmatched (§5.2). |
+| Remote Activation (TO PLC W2) | Latched toggle — writes `1`/`0`, holds the value only after a fresh 7193 read-back confirms it; **rolls back after 5 s** on no echo. Idle, it tracks the read-back. |
+| Counter ack (accommodation) | Pending clears on a matching echo (temperature: exact int); otherwise the value rolls back after the 5 s timeout. |
+| Alarm ack | Pending clears when metrics arrive after the send; otherwise rolled back after the 5 s timeout. |
+| Command timeout | All writes go through `usePendingCommand` — no matching echo within 5 s ⇒ the control's state is restored to the pre-send snapshot (never stuck). |
+| Offline → simulation | With MQTT down the pump room computes pack/unpack locally (FROM PLC word built by tapping channels on/off; TO PLC pressure saved locally, Remote Activation toggled locally, nothing published). |
 
 ---
 
 ## 8. Dashboard client — FROM PLC display + TO PLC read-back
 
-The custom SCADA dashboard is a **second MQTT client** on the same gateway. It
-subscribes to the one `…/metrics` topic and therefore receives **both** PLC
-registers in every snapshot — no separate feed is needed:
+The custom SCADA dashboard is a **second MQTT client** on the same gateway. Both
+PLC registers live on the `…/metrics` topic, so subscribing to it delivers **both**
+in every snapshot — no separate feed is needed:
 
 | Register | id | Dashboard use | Direction |
 |---|---|---|---|
-| FROM PLC | 6563 | DO status — live plant state, bit-unpacked to 14 indicators | receive |
-| TO PLC | 7193 | Read-back of the last command — unpack the 4 words to verify PT1 / PT2 / Pump Activation | receive (+ write) |
+| FROM PLC | 6563 | DO status — live plant state, bit-unpacked to 16 indicators | receive |
+| TO PLC | 7193 | Read-back of the last command — unpack the 4 words to verify PT1 / PT2 / Remote Activation | receive (+ write) |
 
-> The dashboard is also the **authoritative writer of Pump Activation** — per
+> The dashboard is also the **authoritative writer of Remote Activation** — per
 > [`docs/DO.md`](../DO.md), `W[2]` is sent from the dashboard; the mobile app's
-> button mirrors it for simulation. Any client writing 7193 must carry all 4 words
-> (§5.1 clobber rule).
+> button mirrors and read-back-reconciles it. Note the mobile app **also reads 7193
+> back** now (it is no longer write-only). Any client writing 7193 must carry all 4
+> words (§5.1 clobber rule).
 
 ### 8.1 FROM PLC (6563) → DO indicators
 
@@ -319,7 +385,7 @@ bit-unpack with the shared `DO_BIT_MAP`. Suggested operator grouping:
 | Zones | 6, 7 | Local / Remote Zone Activation | which zone triggered |
 | Fire / tank | 8, 9, 10 | FGS Confirmed Fire, Level Tank High / Low | plant safety inputs |
 | Mode | 12, 13 | Local / Remote Mode | mutually exclusive — `01`/`10` normal, `00`/`11` mode fault |
-| — | 14, 15 | spare | ignore |
+| Trips | 14, 15 | Pump A / B Tripped | `1` = tripped (display-only feedback) |
 
 ```
 word = round(counter(6563)) & 0xFFFF
@@ -335,26 +401,29 @@ which client issued them:
 
 ```
 words   = splitWords(value(7193), 4)          // [W0, W1, W2, W3]
-PT1_bar = words[0] / 10   → PT1_mA = PT1_bar + 4
-PT2_bar = words[1] / 10   → PT2_mA = PT2_bar + 4
-pumpAct = words[2]                            // 1 = activation pulse in flight
+PT1_bar = words[0]        → PT1_mA = PT1_bar + 4   // counter is raw bar (1:1)
+PT2_bar = words[1]        → PT2_mA = PT2_bar + 4
+remote  = words[2]                            // 1 = Remote Activation latched, 0 = reset
 ```
 
-- PT1 / PT2 decode is the inverse of §6 (`counter ÷ 10 = bar`, `+ 4 = mA`).
-- `W[2]` reads `1` only while an activation pulse is latched, else `0`.
+- PT1 / PT2 decode is the inverse of §6 (`bar = counter`, `mA = bar + 4`).
+- `W[2]` is the **latched** Remote Activation state (`1` held while active, `0` after
+  reset) — not a transient pulse.
 - `W[3]` is spare (`0`).
 
-Worked example (inverse of §5.1): read-back `4,297,588,810` → `splitWords` →
-`[74, 40, 1, 0]` → PT1 `7.4 bar` (11.4 mA), PT2 `4.0 bar` (8.0 mA), Pump Activation
-`ON`, spare `0`.
+Worked example (inverse of §5.1): read-back `4,295,229,447` → `splitWords` →
+`[7, 4, 1, 0]` → PT1 `7 bar` (11 mA), PT2 `4 bar` (8 mA), Remote Activation `ON`,
+spare `0`.
 
 ### 8.3 Two writers, one register — staying in sync
 
-Both the dashboard and the mobile app write 7193, so each must **re-hydrate its own
-draft from the TO PLC read-back** (§8.2) on connect and on every relevant metrics
-snapshot. Otherwise a pressure write from one client — which re-sends all 4 words
-from its local draft — would overwrite the other's set-point. The read-back is the
-single re-sync point; there is no separate handshake.
+Both the dashboard and the mobile app write 7193, and **both now read it back**, so
+each must reconcile its own state from the TO PLC read-back (§8.2, §5.2) on connect
+and on every relevant metrics snapshot. Otherwise a write from one client — which
+re-sends all 4 words from its local draft plus the latched Remote Activation — would
+overwrite the other's set-point. The read-back is the single re-sync point; there is
+no separate handshake. Each client only holds a field against the read-back while
+its own write for that field is still pending (the un-acked window).
 
 ---
 
@@ -372,11 +441,11 @@ node scripts/mqtt-probe.mjs observe 20   # subscribe only, no writes
 node scripts/mqtt-probe.mjs all          # every write-enabled probe
 ```
 
-Example echo line that settles the encoding question:
+Example — read 7193 back after injecting PT1 = 7 bar to confirm the 1:1 bar scale:
 
 ```
-• id=6983 type=0 unit="mA" name="Total value" value=114 (number, int)   → uint ×10 (current)
-• id=6983 type=0 unit="mA" name="Total value" value=11.4 (number, float) → float, send raw
+• id=7193 name="Total value" value=7 (number, int)   → splitWords → W0=7  → 7 bar   (current: raw bar 1:1)
+• id=7193 name="Total value" value=70 (number, int)  → splitWords → W0=70 → would mean bar×10 (restore scale)
 ```
 
 ---
@@ -387,8 +456,9 @@ Example echo line that settles the encoding question:
 |---|---|
 | `src/lib/mqtt-topics.ts` | Config, topics, payload types, command builders, metrics parsers, pressure encoding. |
 | `src/lib/bit-packed-word.ts` | Generic uint16 bit pack/unpack helpers. |
-| `src/providers/mqtt-provider.tsx` | Broker connection, subscribe, publish, metrics merge/cache, latency. |
-| `src/app/stations/accommodation-room.tsx` | Smoke / temperature / alarm inject + zone heating read-out. |
-| `src/app/stations/pump-room.tsx` | DO read (6563) + packed TO PLC write (7193) for DO & pressure, bit maps. |
+| `src/hooks/use-pending-command.ts` | Shared optimistic-command tracker: start / resolve / timeout (5 s) → rollback. |
+| `src/providers/mqtt-provider.tsx` | Broker connection, split-metrics subscribe + merge/cache, publish, loopback latency ping. |
+| `src/app/stations/accommodation-room.tsx` | Smoke / temperature / alarm inject (pending-command) + zone heating read-out. |
+| `src/app/stations/pump-room.tsx` | DO read (6563) + packed TO PLC write **& read-back** (7193): pressure (bar), Remote Activation toggle, bit maps, interlocks. |
 | `src/lib/accommodation-room-demo.ts`, `pump-room-demo.ts` | Draft defaults + local persistence. |
 | `scripts/mqtt-probe.mjs` | Live gateway probe / echo dump. |

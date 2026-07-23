@@ -483,11 +483,6 @@ export default function PumpRoom() {
   const [simDoWord, setSimDoWord] = useState(0);     // simulation: built by tapping channels
   const doWord = isSimulation ? simDoWord : lastDoWord;
   const doState = unpackChannels([doWord], DO_BIT_MAP);
-  const isPressureFieldTripped = useCallback(
-    (key: PumpRoomPlcInputKey) =>
-      key === 'pressurePump1' ? doState.pumpATripped : doState.pumpBTripped,
-    [doState.pumpATripped, doState.pumpBTripped]
-  );
 
   // Simulation: tap a channel to flip its bit; decimal + bits recompute from the word.
   const toggleDoChannel = useCallback((key: DoKey) => {
@@ -863,11 +858,6 @@ export default function PumpRoom() {
   // stays local so you can watch the pack calculation without a broker.
   const updatePressureField = useCallback(
     (key: PumpRoomPlcInputKey, value: string) => {
-      if (isPressureFieldTripped(key)) {
-        showCommandError(`${key === 'pressurePump1' ? 'PT-001' : 'PT-002'} disabled: pump tripped.`);
-        return;
-      }
-
       const commandId = getToPlcCommandId(key);
 
       if (isToPlcCommandPending(commandId)) {
@@ -930,7 +920,6 @@ export default function PumpRoom() {
     },
     [
       confirmedInject,
-      isPressureFieldTripped,
       isToPlcCommandPending,
       sendToPlcCommand,
       showCommandError,
@@ -977,9 +966,8 @@ export default function PumpRoom() {
 
   const isPumpActivationPending = isToPlcCommandPending(getToPlcCommandId('pumpActivation'));
   const getPressurePending = useCallback(
-    (key: PumpRoomPlcInputKey) =>
-      isToPlcCommandPending(getToPlcCommandId(key)) || isPressureFieldTripped(key),
-    [isPressureFieldTripped, isToPlcCommandPending]
+    (key: PumpRoomPlcInputKey) => isToPlcCommandPending(getToPlcCommandId(key)),
+    [isToPlcCommandPending]
   );
   const latestPendingToPlcCommand = useMemo(() => {
     const pendingCommands = Object.values(pendingToPlcCommandMap);
