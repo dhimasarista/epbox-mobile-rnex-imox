@@ -125,6 +125,7 @@ const MA_STEP = 0.1;
 
 // Debounce slider drags before publishing so we don't flood the OT channel.
 const COMMAND_DEBOUNCE_MS = 250;
+const PUMP_ACTIVATION_RESET_DELAY_MS = 2_000;
 const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 
 // PT-001 / PT-002: alarm thresholds in mA
@@ -155,6 +156,12 @@ function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0) {
     pressurePump1Counter: pressureMaToCounter(parseMa(inputs.pressurePump1)),
     pressurePump2Counter: pressureMaToCounter(parseMa(inputs.pressurePump2)),
     pumpActivation,
+  });
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
 
@@ -697,9 +704,11 @@ export default function PumpRoom() {
 
       const pressurePump1Ma = overrides.pressurePump1Ma ?? parseMa(injectDraftRef.current.pressurePump1);
       const pressurePump2Ma = overrides.pressurePump2Ma ?? parseMa(injectDraftRef.current.pressurePump2);
+      const pressurePump1Counter = pressureMaToCounter(pressurePump1Ma);
+      const pressurePump2Counter = pressureMaToCounter(pressurePump2Ma);
       const packed = packToPlcCommand({
-        pressurePump1Counter: pressureMaToCounter(pressurePump1Ma),
-        pressurePump2Counter: pressureMaToCounter(pressurePump2Ma),
+        pressurePump1Counter,
+        pressurePump2Counter,
         pumpActivation: overrides.pumpActivation ?? 0,
       });
       const pendingCommand = startToPlcCommand({
@@ -724,6 +733,24 @@ export default function PumpRoom() {
 
       try {
         await publishPackedToPlc(packed);
+
+        if (kind === 'pumpActivation') {
+          await wait(PUMP_ACTIVATION_RESET_DELAY_MS);
+          await publishPackedToPlc(
+            packToPlcCommand({
+              pressurePump1Counter,
+              pressurePump2Counter,
+              pumpActivation: 0,
+            })
+          );
+
+          if (pumpActPulseTimeoutRef.current) {
+            clearTimeout(pumpActPulseTimeoutRef.current);
+            pumpActPulseTimeoutRef.current = null;
+          }
+          setPumpActPulse(0);
+        }
+
         setLastCommandError(null);
       } catch (err: unknown) {
         resolveToPlcCommand(commandId, {
