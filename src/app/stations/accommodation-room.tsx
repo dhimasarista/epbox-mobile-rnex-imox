@@ -912,6 +912,20 @@ export default function AccommodationRoom() {
         return;
       }
 
+      if (field === 'smokeDetected' && statusRef.current === 'connected') {
+        const optimisticSmokeValue = command.snapshot.expectedMetricValue >= 0.5;
+
+        setDraftForm((current) => ({
+          ...current,
+          smokeDetected: optimisticSmokeValue,
+        }));
+        setConfirmedForm((current) => ({
+          ...current,
+          smokeDetected: optimisticSmokeValue,
+        }));
+        return;
+      }
+
       setDraftForm((current) => ({
         ...current,
         smokeDetected: rollbackDraftValue as boolean,
