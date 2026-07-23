@@ -106,9 +106,17 @@ export type AccommodationRoomZoneHeatingState = {
   statusLabel: string;
 };
 
+// Small self-addressed payload the app publishes to (and subscribes to) its own
+// topic purely to measure broker round-trip latency. Never touches the gateway/PLC.
+export type AppLatencyPingPayload = {
+  nonce: string;
+  sentAt: number;
+};
+
 export type MqttTopicPayloadMap = {
   gatewayMetrics: CarloGavazziMetricsPayload;
   gatewayOtCommand: CarloGavazziGatewayCommandPayload;
+  appLatencyPing: AppLatencyPingPayload;
 };
 
 export type MqttTopicKey = keyof MqttTopicPayloadMap;
@@ -121,6 +129,12 @@ type TopicDefinitionConfig<TKey extends MqttTopicKey> = {
   direction: MqttTopicDirection;
   qos?: MqttTopicQos;
   retain?: boolean;
+  // The gateway used to publish every device on one `.../metrics` topic, but now
+  // splits the same payload shape across several sibling topics (see
+  // GATEWAY_METRICS_SUBSCRIBE_TOPICS). When set, the client subscribes to every
+  // listed topic and routes them all back into this one definition/store; the
+  // devices are disjoint by id, so mergeCarloGavazziMetricsPayload unions them.
+  subscribeTopics?: readonly string[];
 };
 
 export type MqttTopicDefinition<TKey extends MqttTopicKey = MqttTopicKey> =
@@ -307,12 +321,26 @@ function createJsonTopicDefinition<TKey extends MqttTopicKey>(
   };
 }
 
+// The gateway splits its device/signal snapshots across three sibling topics
+// instead of one. Each carries the same CarloGavazziMetricsPayload shape but a
+// disjoint set of devices (by id), so the app subscribes to all three and merges
+// them into the single `gatewayMetrics` store (union by device id). Kept in sync
+// with docs/Protocols/MQTT.md "Receive Signals".
+export const GATEWAY_METRICS_SUBSCRIBE_TOPICS = [
+  `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/metrics`, // FROM PLC 6563, TO PLC 7193
+  `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/pressure-transmitter`, // PT1 6983, PT2 7019
+  `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/acc-room/metrics`, // smoke 3549, temp 3585, alarm 3667, zone 4147
+] as const;
+
 export const MQTT_TOPICS = {
   gatewayMetrics: createJsonTopicDefinition({
     key: 'gatewayMetrics',
+    // Primary topic (used for the disk cache write); all three metrics topics in
+    // GATEWAY_METRICS_SUBSCRIBE_TOPICS are subscribed and routed into this store.
     topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/metrics`,
+    subscribeTopics: GATEWAY_METRICS_SUBSCRIBE_TOPICS,
     label: 'Gateway Metrics',
-    description: 'Device and signal snapshots returned by the gateway.',
+    description: 'Device and signal snapshots returned by the gateway (metrics + pressure-transmitter + acc-room).',
     direction: 'subscribe',
   }),
   gatewayOtCommand: createJsonTopicDefinition({
@@ -321,6 +349,17 @@ export const MQTT_TOPICS = {
     label: 'Gateway OT Command',
     description: 'Carlo Gavazzi command channel used by station controls and alarm actions.',
     direction: 'publish',
+    qos: 0,
+    retain: false,
+  }),
+  // App-owned loopback topic: the client both publishes and subscribes here to
+  // measure broker round-trip latency in ms. Never reaches the gateway/PLC.
+  appLatencyPing: createJsonTopicDefinition({
+    key: 'appLatencyPing',
+    topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/app/latency-ping`,
+    label: 'App Latency Ping',
+    description: 'Self-addressed round-trip probe used to compute live MQTT response time.',
+    direction: 'duplex',
     qos: 0,
     retain: false,
   }),
@@ -333,6 +372,11 @@ export const MQTT_TOPIC_CATALOG = Object.values(MQTT_TOPICS) as MqttTopicDefinit
 const MQTT_TOPIC_LOOKUP = MQTT_TOPIC_CATALOG.reduce<Record<string, MqttTopicDefinition>>(
   (lookup, definition) => {
     lookup[definition.topic] = definition;
+    // Route every extra subscribe topic (split metrics) back to the same
+    // definition so getMqttTopicDefinitionByPath resolves all of them.
+    definition.subscribeTopics?.forEach((topic) => {
+      lookup[topic] = definition;
+    });
     return lookup;
   },
   {}

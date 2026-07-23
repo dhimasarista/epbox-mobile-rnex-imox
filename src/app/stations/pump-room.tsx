@@ -12,6 +12,11 @@ import {
   type BitChannelMap,
 } from '@/lib/bit-packed-word';
 import {
+  DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
+  usePendingCommand,
+  type PendingCommandState,
+} from '@/hooks/use-pending-command';
+import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
   getCarloGavazziCounterNumericValue,
@@ -35,6 +40,35 @@ import { getSignalPalette, styles as stationStyles, type SignalTone } from '@/st
 type ActiveTab = 'plc' | 'inject';
 type DerivedAlarmLevel = 'clear' | 'warning' | 'danger';
 type DerivedAlarm = { level: DerivedAlarmLevel; conditions: string[] };
+type ToPlcPendingKind = PumpRoomPlcInputKey | 'pumpActivation';
+type ToPlcCommandSnapshot = {
+  kind: ToPlcPendingKind;
+  baselineReceivedAt: number | null;
+  expectedPacked: number;
+  successMessage: string;
+  previousPumpActPulse: number;
+  pressureField?: PumpRoomPlcInputKey;
+  previousConfirmedValue?: string;
+  previousDraftValue?: string;
+  nextValue?: string;
+};
+
+function getToPlcCommandId(kind: ToPlcPendingKind) {
+  return `to-plc:${kind}`;
+}
+
+function isPressureCommand(
+  command: PendingCommandState<ToPlcCommandSnapshot>
+): command is PendingCommandState<
+  ToPlcCommandSnapshot & {
+    pressureField: PumpRoomPlcInputKey;
+    previousConfirmedValue: string;
+    previousDraftValue: string;
+    nextValue: string;
+  }
+> {
+  return command.snapshot.pressureField !== undefined;
+}
 
 // ─── FROM PLC — Digital Output status (id 6563, read-only) ───────────────────
 // The PLC reports its DO output as one uint16 word (bit 0 = LSB). Per docs/DO.md
@@ -318,10 +352,12 @@ function PressureBlockBar({ bar, tone }: { bar: number; tone: SignalTone }) {
 function PressureSlider({
   label,
   value,
+  disabled,
   onChange,
 }: {
   label: string;
   value: string;
+  disabled: boolean;
   onChange: (v: string) => void;
 }) {
   // Inject-only: the slider value is the single source of truth (no gateway
@@ -353,6 +389,7 @@ function PressureSlider({
           minimumTrackTintColor={palette.accent}
           maximumTrackTintColor={palette.track}
           thumbTintColor={palette.accent}
+          disabled={disabled}
           onValueChange={(v) => onChange(formatMa(v))}
           style={stationStyles.pressureSlider}
         />
@@ -374,13 +411,23 @@ function PressureSlider({
   );
 }
 
-function PumpActivationButton({ simulation, onFire }: { simulation: boolean; onFire: () => void }) {
+function PumpActivationButton({
+  simulation,
+  disabled,
+  onFire,
+}: {
+  simulation: boolean;
+  disabled: boolean;
+  onFire: () => void;
+}) {
   return (
     <TouchableOpacity
-      style={[s.pumpActBtn, simulation && s.pumpActBtnSim]}
+      style={[s.pumpActBtn, simulation && s.pumpActBtnSim, disabled && s.pumpActBtnDisabled]}
+      disabled={disabled}
       onPress={onFire}
       activeOpacity={0.85}
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
       accessibilityLabel="Pump Activation">
       <Feather name="zap" size={16} color={AppColors.textInverse} />
       <Text style={s.pumpActBtnText}>
@@ -411,10 +458,19 @@ function DerivedAlarmCard({ alarm }: { alarm: DerivedAlarm }) {
 export default function PumpRoom() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('plc');
 
-  const { publishTopic, status } = useMqtt();
+  const { publishTopic, recordLatencySample, status } = useMqtt();
+  const recordLatencySampleRef = useRef(recordLatencySample);
+  recordLatencySampleRef.current = recordLatencySample;
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
+  const {
+    commands: pendingToPlcCommandMap,
+    isPending: isToPlcCommandPending,
+    resolveAllCommands: resolveAllToPlcCommands,
+    resolveCommand: resolveToPlcCommand,
+    startCommand: startToPlcCommand,
+  } = usePendingCommand<ToPlcCommandSnapshot>();
 
   // When MQTT is offline, the whole screen runs as a local pack/unpack simulator.
   const isSimulation = status !== 'connected';
@@ -432,15 +488,28 @@ export default function PumpRoom() {
 
   // ── TO PLC tab state (inject PT-001/PT-002 + momentary pump activation) ──
   const [injectDraft, setInjectDraft] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
+  const [confirmedInject, setConfirmedInject] = useState(DEFAULT_PUMP_ROOM_PLC_INPUTS);
   const injectDraftRef = useRef(injectDraft);
   injectDraftRef.current = injectDraft;
   const pressureDebounceRef = useRef<Partial<Record<PumpRoomPlcInputKey, ReturnType<typeof setTimeout>>>>({});
+  const pressureSnapshotRef = useRef<
+    Partial<
+      Record<
+        PumpRoomPlcInputKey,
+        {
+          previousConfirmedValue: string;
+          previousDraftValue: string;
+        }
+      >
+    >
+  >({});
   const hasHydratedRef = useRef(false);
   const derivedAlarm = getDerivedAlarm(injectDraft);
   // Since the packed TO PLC word (7193) has no per-field echo, a successful
   // publish (or a simulation) just flashes a transient note for ~2 s.
   const [injectFlash, setInjectFlash] = useState<string | null>(null);
   const injectFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commandErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Pump Activation is momentary — normally W[2] = 0. When fired we pulse it to 1
   // for ~2 s so the packed word / W-grid transparently shows what was sent.
@@ -457,6 +526,54 @@ export default function PumpRoom() {
     if (injectFlashTimeoutRef.current) clearTimeout(injectFlashTimeoutRef.current);
     injectFlashTimeoutRef.current = setTimeout(() => setInjectFlash(null), 2_000);
   }, []);
+
+  const showCommandError = useCallback((message: string) => {
+    setLastCommandError(message);
+
+    if (commandErrorTimeoutRef.current) clearTimeout(commandErrorTimeoutRef.current);
+    commandErrorTimeoutRef.current = setTimeout(() => {
+      setLastCommandError((current) => (current === message ? null : current));
+      commandErrorTimeoutRef.current = null;
+    }, 2_500);
+  }, []);
+
+  const rollbackToPlcCommand = useCallback((command: PendingCommandState<ToPlcCommandSnapshot>) => {
+    if (isPressureCommand(command)) {
+      const { pressureField, previousConfirmedValue, previousDraftValue } = command.snapshot;
+
+      setInjectDraft((current) => ({
+        ...current,
+        [pressureField]: previousDraftValue,
+      }));
+      setConfirmedInject((current) => {
+        const next = {
+          ...current,
+          [pressureField]: previousConfirmedValue,
+        };
+        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
+        return next;
+      });
+    }
+
+    setPumpActPulse(command.snapshot.previousPumpActPulse);
+  }, []);
+
+  const commitToPlcCommand = useCallback((command: PendingCommandState<ToPlcCommandSnapshot>) => {
+    if (isPressureCommand(command)) {
+      const { nextValue, pressureField } = command.snapshot;
+
+      setConfirmedInject((current) => {
+        const next = {
+          ...current,
+          [pressureField]: nextValue,
+        };
+        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
+        return next;
+      });
+    }
+
+    flashInject(command.snapshot.successMessage);
+  }, [flashInject]);
 
   const pulsePumpActivation = useCallback(() => {
     setPumpActPulse(1);
@@ -476,18 +593,78 @@ export default function PumpRoom() {
     return () => clearTimeout(timer);
   }, [metricsReceivedAt, metricsTopic.payload, status]);
 
-  // Every write targets the TO PLC counter (7193). A caller supplies only the
-  // field it changes; the rest come from the latest drafts so no word is clobbered.
-  const publishToPlc = useCallback(
-    (overrides: { pressurePump1Ma?: number; pressurePump2Ma?: number; pumpActivation?: number }) => {
-      const pressurePump1Ma = overrides.pressurePump1Ma ?? parseMa(injectDraftRef.current.pressurePump1);
-      const pressurePump2Ma = overrides.pressurePump2Ma ?? parseMa(injectDraftRef.current.pressurePump2);
-      const packed = packToPlcCommand({
-        pressurePump1Counter: pressureMaToCounter(pressurePump1Ma),
-        pressurePump2Counter: pressureMaToCounter(pressurePump2Ma),
-        pumpActivation: overrides.pumpActivation ?? 0,
+  useEffect(() => {
+    if (!metricsTopic.payload || metricsReceivedAt === null) {
+      return;
+    }
+
+    const toPlcValue = getCarloGavazziCounterNumericValue(
+      metricsTopic.payload,
+      CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.toPlc.deviceId
+    );
+
+    if (toPlcValue === null) {
+      return;
+    }
+
+    const roundedToPlcValue = Math.round(toPlcValue);
+    const ackedCommands = Object.values(pendingToPlcCommandMap).filter((command) => {
+      const isFresh =
+        command.snapshot.baselineReceivedAt === null
+          ? metricsReceivedAt >= command.startedAt
+          : metricsReceivedAt > command.snapshot.baselineReceivedAt;
+
+      return isFresh && command.snapshot.expectedPacked === roundedToPlcValue;
+    });
+
+    if (ackedCommands.length === 0) {
+      return;
+    }
+
+    const latestAcked =
+      [...ackedCommands].sort((left, right) => left.startedAt - right.startedAt).pop() ?? null;
+
+    if (latestAcked) {
+      recordLatencySampleRef.current({
+        label: latestAcked.label,
+        requestTopicKey: 'gatewayOtCommand',
+        responseTopicKey: 'gatewayMetrics',
+        startedAt: latestAcked.startedAt,
+        completedAt: metricsReceivedAt,
       });
-      return publishTopic(
+    }
+
+    ackedCommands.forEach((command) => {
+      resolveToPlcCommand(command.id, {
+        onResolve: commitToPlcCommand,
+      });
+    });
+    setLastCommandError(null);
+  }, [
+    commitToPlcCommand,
+    metricsReceivedAt,
+    metricsTopic.payload,
+    pendingToPlcCommandMap,
+    resolveToPlcCommand,
+  ]);
+
+  useEffect(() => {
+    if (status === 'connected') {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      resolveAllToPlcCommands({
+        onResolve: rollbackToPlcCommand,
+      });
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [resolveAllToPlcCommands, rollbackToPlcCommand, status]);
+
+  const publishPackedToPlc = useCallback(
+    (packed: number) =>
+      publishTopic(
         'gatewayOtCommand',
         buildCarloGavazziOtCommand(
           CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.toPlc.deviceId,
@@ -495,9 +672,75 @@ export default function PumpRoom() {
           packed
         ),
         { qos: 0, retain: false }
-      );
-    },
+      ),
     [publishTopic]
+  );
+
+  const sendToPlcCommand = useCallback(
+    async (
+      kind: ToPlcPendingKind,
+      overrides: { pressurePump1Ma?: number; pressurePump2Ma?: number; pumpActivation?: number },
+      snapshot: Omit<
+        ToPlcCommandSnapshot,
+        'baselineReceivedAt' | 'expectedPacked' | 'previousPumpActPulse'
+      >
+    ) => {
+      const commandId = getToPlcCommandId(kind);
+
+      if (isToPlcCommandPending(commandId)) {
+        showCommandError(`${snapshot.successMessage} is already waiting for gateway response.`);
+        return;
+      }
+
+      const pressurePump1Ma = overrides.pressurePump1Ma ?? parseMa(injectDraftRef.current.pressurePump1);
+      const pressurePump2Ma = overrides.pressurePump2Ma ?? parseMa(injectDraftRef.current.pressurePump2);
+      const packed = packToPlcCommand({
+        pressurePump1Counter: pressureMaToCounter(pressurePump1Ma),
+        pressurePump2Counter: pressureMaToCounter(pressurePump2Ma),
+        pumpActivation: overrides.pumpActivation ?? 0,
+      });
+      const pendingCommand = startToPlcCommand({
+        id: commandId,
+        label: snapshot.successMessage,
+        snapshot: {
+          ...snapshot,
+          baselineReceivedAt: metricsReceivedAt,
+          expectedPacked: packed,
+          previousPumpActPulse: pumpActPulse,
+        },
+        timeoutMs: DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
+        onTimeout: (command) => {
+          rollbackToPlcCommand(command);
+          showCommandError(`${command.label} timed out. Rolled back.`);
+        },
+      });
+
+      if (!pendingCommand) {
+        return;
+      }
+
+      try {
+        await publishPackedToPlc(packed);
+        setLastCommandError(null);
+      } catch (err: unknown) {
+        resolveToPlcCommand(commandId, {
+          onResolve: rollbackToPlcCommand,
+        });
+        showCommandError(
+          err instanceof Error ? err.message : `Unable to send ${snapshot.successMessage}.`
+        );
+      }
+    },
+    [
+      isToPlcCommandPending,
+      metricsReceivedAt,
+      publishPackedToPlc,
+      pumpActPulse,
+      resolveToPlcCommand,
+      rollbackToPlcCommand,
+      showCommandError,
+      startToPlcCommand,
+    ]
   );
 
   // ── TO PLC: hydrate pressure drafts from storage ──
@@ -506,6 +749,7 @@ export default function PumpRoom() {
     getStoredPumpRoomPlcInputs().then((stored) => {
       if (!mounted) return;
       setInjectDraft(stored);
+      setConfirmedInject(stored);
       hasHydratedRef.current = true;
     });
     const debounces = pressureDebounceRef.current;
@@ -516,6 +760,7 @@ export default function PumpRoom() {
         if (timer) clearTimeout(timer);
       });
       if (injectFlashTimeoutRef.current) clearTimeout(injectFlashTimeoutRef.current);
+      if (commandErrorTimeoutRef.current) clearTimeout(commandErrorTimeoutRef.current);
       if (pumpActPulseTimeoutRef.current) clearTimeout(pumpActPulseTimeoutRef.current);
     };
   }, []);
@@ -524,29 +769,60 @@ export default function PumpRoom() {
   // stays local so you can watch the pack calculation without a broker.
   const updatePressureField = useCallback(
     (key: PumpRoomPlcInputKey, value: string) => {
+      const commandId = getToPlcCommandId(key);
+
+      if (isToPlcCommandPending(commandId)) {
+        showCommandError(`${key === 'pressurePump1' ? 'PT-001' : 'PT-002'} is already waiting for gateway response.`);
+        return;
+      }
+
       const nextMa = parseMa(value);
+      const nextFormattedValue = formatMa(nextMa);
+
+      if (!pressureSnapshotRef.current[key]) {
+        pressureSnapshotRef.current[key] = {
+          previousConfirmedValue: confirmedInject[key],
+          previousDraftValue: injectDraftRef.current[key],
+        };
+      }
+
       const nextInputs = { ...injectDraftRef.current, [key]: formatMa(nextMa) };
       setInjectDraft(nextInputs);
 
       const existing = pressureDebounceRef.current[key];
       if (existing) clearTimeout(existing);
       pressureDebounceRef.current[key] = setTimeout(() => {
-        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(nextInputs);
-        if (status !== 'connected') return; // simulation: local only, no publish
         const label = key === 'pressurePump1' ? 'PT-001' : 'PT-002';
-        void publishToPlc(
-          key === 'pressurePump1' ? { pressurePump1Ma: nextMa } : { pressurePump2Ma: nextMa }
-        )
-          .then(() => {
-            setLastCommandError(null);
-            flashInject(`${label} ${formatMa(nextMa)} injected → PLC`);
-          })
-          .catch((err: unknown) => {
-            setLastCommandError(err instanceof Error ? err.message : `Unable to send ${label}.`);
+        const snapshot = pressureSnapshotRef.current[key] ?? {
+          previousConfirmedValue: confirmedInject[key],
+          previousDraftValue: injectDraftRef.current[key],
+        };
+        pressureSnapshotRef.current[key] = undefined;
+
+        if (status !== 'connected') {
+          setConfirmedInject((current) => {
+            const next = { ...current, [key]: nextFormattedValue };
+            if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
+            return next;
           });
+          return;
+        }
+
+        void sendToPlcCommand(
+          key,
+          key === 'pressurePump1' ? { pressurePump1Ma: nextMa } : { pressurePump2Ma: nextMa },
+          {
+            kind: key,
+            pressureField: key,
+            previousConfirmedValue: snapshot.previousConfirmedValue,
+            previousDraftValue: snapshot.previousDraftValue,
+            nextValue: nextFormattedValue,
+            successMessage: `${label} ${nextFormattedValue} injected → PLC`,
+          }
+        );
       }, COMMAND_DEBOUNCE_MS);
     },
-    [flashInject, publishToPlc, status]
+    [confirmedInject, isToPlcCommandPending, sendToPlcCommand, showCommandError, status]
   );
 
   // Momentary: fire once with W[2] = 1. The pulse lights up W2 in the grid either

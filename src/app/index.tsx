@@ -64,9 +64,12 @@ export default function HomeScreen() {
     refreshIntervalMs: 2000,
   });
 
-  const { endpointLabel, isGatewayStale, latestLatencySample, status } = useMqtt();
+  const { endpointLabel, isGatewayStale, latestPingLatencyMs, status } = useMqtt();
   const brokerTransportLabel = getMqttTransportLabel(endpointLabel);
-  const responseTimeValue = latestLatencySample?.durationMs ?? '--';
+  // Live broker round-trip from the loopback probe (updates every few seconds
+  // while connected); dashes out when offline / before the first echo.
+  const responseTimeValue =
+    status === 'connected' && latestPingLatencyMs !== null ? latestPingLatencyMs : '--';
 
   const gatewayStatusValue =
     status !== 'connected' ? 'Offline' : isGatewayStale ? 'Stale' : 'Online';

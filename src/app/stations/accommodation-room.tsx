@@ -14,6 +14,11 @@ import {
   type AccommodationRoomInputs,
 } from '@/lib/accommodation-room-demo';
 import {
+  DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
+  usePendingCommand,
+  type PendingCommandState,
+} from '@/hooks/use-pending-command';
+import {
   ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS,
   buildCarloGavazziAlarmCommand,
   buildCarloGavazziOtCommand,
@@ -32,25 +37,50 @@ const ACCOMMODATION_TEMP_WARNING_C = 40;
 const ACCOMMODATION_TEMP_ALERT_C = 55;
 const ACCOMMODATION_TEMP_MAX_C = 120;
 const COMMAND_DEBOUNCE_MS = 250;
-const ALARM_WRITE_GUARD_MS = 5_000; // silent expiry — no countdown shown
 
 type AccommodationEditableKey = 'smokeDetected' | 'temperatureValue';
-type PendingCounterCommand = {
+type CounterCommandSnapshot = {
+  kind: 'counter';
+  field: AccommodationEditableKey;
   counterId: number;
   expectedMetricValue: number;
-  requestedLabel: string;
-  sentAt: number;
+  baselineReceivedAt: number | null;
+  previousConfirmedValue: AccommodationRoomInputs[AccommodationEditableKey];
+  previousDraftValue: AccommodationRoomInputs[AccommodationEditableKey];
 };
-type PendingCounterCommandMap = Partial<Record<AccommodationEditableKey, PendingCounterCommand>>;
-type PendingAlarmCommand = {
-  cmd: CarloGavazziAlarmCommandName;
-  requestedLabel: string;
-  sentAt: number;
+type AlarmCommandSnapshot = {
+  kind: 'alarm';
+  command: CarloGavazziAlarmCommandName;
   baselineReceivedAt: number | null;
 };
-// Only the command that was just sent is write-guarded; other alarm buttons
-// (e.g. an emergency Reset while Acknowledge is still pending ack) stay usable.
-type PendingAlarmCommandMap = Partial<Record<CarloGavazziAlarmCommandName, PendingAlarmCommand>>;
+type AccommodationCommandSnapshot = CounterCommandSnapshot | AlarmCommandSnapshot;
+
+function getCounterCommandId(field: AccommodationEditableKey) {
+  return `counter:${field}`;
+}
+
+function getAlarmCommandId(command: CarloGavazziAlarmCommandName) {
+  return `alarm:${command}`;
+}
+
+function isCounterCommand(
+  command: PendingCommandState<AccommodationCommandSnapshot>
+): command is PendingCommandState<CounterCommandSnapshot> {
+  return command.snapshot.kind === 'counter';
+}
+
+function isAlarmCommand(
+  command: PendingCommandState<AccommodationCommandSnapshot>
+): command is PendingCommandState<AlarmCommandSnapshot> {
+  return command.snapshot.kind === 'alarm';
+}
+
+function getAccommodationFieldValue(
+  form: AccommodationRoomInputs,
+  field: AccommodationEditableKey
+) {
+  return field === 'temperatureValue' ? form.temperatureValue : form.smokeDetected;
+}
 
 function getAccommodationTemperatureSignalTone(value: number): SignalTone {
   if (value >= ACCOMMODATION_TEMP_ALERT_C) {
@@ -264,6 +294,7 @@ function AccommodationToggleField({
   activeIcon,
   inactiveIcon,
   hint,
+  disabled,
   onChange,
 }: {
   label: string;
@@ -274,6 +305,7 @@ function AccommodationToggleField({
   activeIcon: ComponentProps<typeof Feather>['name'];
   inactiveIcon: ComponentProps<typeof Feather>['name'];
   hint: string;
+  disabled: boolean;
   onChange: (value: boolean) => void;
 }) {
   const theme = getToggleTheme();
@@ -291,15 +323,17 @@ function AccommodationToggleField({
 
           <TouchableOpacity
             activeOpacity={0.92}
+            disabled={disabled}
             onPress={() => onChange(!value)}
             accessibilityRole="switch"
-            accessibilityState={{ checked: value }}
+            accessibilityState={{ checked: value, disabled }}
             accessibilityLabel={label}
             style={[
               styles.alarmToggle,
               value
                 ? { backgroundColor: theme.surface, borderColor: theme.border }
                 : styles.alarmToggleInactive,
+              disabled && styles.alarmCommandButtonDisabled,
             ]}>
             <View
               style={[
@@ -326,12 +360,14 @@ function AccommodationTemperatureField({
   draftValue,
   hint,
   heatingState,
+  disabled,
   onChange,
 }: {
   confirmedValue: string;
   draftValue: string;
   hint: string;
   heatingState: AccommodationRoomZoneHeatingState;
+  disabled: boolean;
   onChange: (value: string) => void;
 }) {
   const confirmedTemperatureValue = parseAccommodationTemperature(confirmedValue);
@@ -480,6 +516,7 @@ function AccommodationTemperatureField({
             minimumTrackTintColor={signalPalette.accent}
             maximumTrackTintColor={signalPalette.track}
             thumbTintColor={signalPalette.accent}
+            disabled={disabled}
             onValueChange={(nextValue) => onChange(formatAccommodationTemperature(nextValue))}
             style={styles.dashboardPressureSlider}
           />
@@ -523,13 +560,18 @@ function AlarmCommandButton({
   label,
   tone,
   disabled,
+  countdownSeconds,
   onPress,
 }: {
   label: string;
   tone: 'primary' | 'secondary';
   disabled: boolean;
+  // Seconds left on the fallback window while this command is in flight (5…0),
+  // or null when idle. Shown as a live countdown so the wait is transparent.
+  countdownSeconds?: number | null;
   onPress: () => void;
 }) {
+  const isCountingDown = typeof countdownSeconds === 'number';
   return (
     <TouchableOpacity
       activeOpacity={0.9}
@@ -547,7 +589,7 @@ function AlarmCommandButton({
             ? styles.alarmCommandButtonTextPrimary
             : styles.alarmCommandButtonTextSecondary,
         ]}>
-        {label}
+        {isCountingDown ? `${label} · ${countdownSeconds}s` : label}
       </Text>
     </TouchableOpacity>
   );
@@ -563,6 +605,7 @@ function AccommodationAlarmSection({
   behaviorHint,
   isConnected,
   isCommandLocked,
+  getCommandCountdown,
   isPending,
   mqttLinkLabel,
   mqttLinkDetail,
@@ -580,6 +623,7 @@ function AccommodationAlarmSection({
   behaviorHint: string;
   isConnected: boolean;
   isCommandLocked: (command: CarloGavazziAlarmCommandName) => boolean;
+  getCommandCountdown: (command: CarloGavazziAlarmCommandName) => number | null;
   isPending: boolean;
   mqttLinkLabel: string;
   mqttLinkDetail: string;
@@ -682,24 +726,28 @@ function AccommodationAlarmSection({
           label="Acknowledge Alarm"
           tone="primary"
           disabled={!isConnected || isCommandLocked('Acknowledgement')}
+          countdownSeconds={getCommandCountdown('Acknowledgement')}
           onPress={() => onCommandPress('Acknowledgement', 'Acknowledge Alarm')}
         />
         <AlarmCommandButton
           label="Reset Alarm"
           tone="primary"
           disabled={!isConnected || isCommandLocked('Reset')}
+          countdownSeconds={getCommandCountdown('Reset')}
           onPress={() => onCommandPress('Reset', 'Reset Alarm')}
         />
         <AlarmCommandButton
           label="Reset ON"
           tone="secondary"
           disabled={!isConnected || isCommandLocked('ResetOn')}
+          countdownSeconds={getCommandCountdown('ResetOn')}
           onPress={() => onCommandPress('ResetOn', 'Reset ON')}
         />
         <AlarmCommandButton
           label="Reset OFF"
           tone="secondary"
           disabled={!isConnected || isCommandLocked('ResetOff')}
+          countdownSeconds={getCommandCountdown('ResetOff')}
           onPress={() => onCommandPress('ResetOff', 'Reset OFF')}
         />
         {/* <AlarmCommandButton
@@ -727,6 +775,8 @@ function AccommodationSourceSection({
   heatingState,
   smokeHint,
   temperatureHint,
+  isSmokePending,
+  isTemperaturePending,
   onSmokeChange,
   onTemperatureChange,
 }: {
@@ -735,6 +785,8 @@ function AccommodationSourceSection({
   heatingState: AccommodationRoomZoneHeatingState;
   smokeHint: string;
   temperatureHint: string;
+  isSmokePending: boolean;
+  isTemperaturePending: boolean;
   onSmokeChange: (value: boolean) => void;
   onTemperatureChange: (value: string) => void;
 }) {
@@ -749,6 +801,7 @@ function AccommodationSourceSection({
         activeIcon="cloud-lightning"
         inactiveIcon="wind"
         hint={smokeHint}
+        disabled={isSmokePending}
         onChange={onSmokeChange}
       />
 
@@ -757,6 +810,7 @@ function AccommodationSourceSection({
         draftValue={draftForm.temperatureValue}
         hint={temperatureHint}
         heatingState={heatingState}
+        disabled={isTemperaturePending}
         onChange={onTemperatureChange}
       />
     </View>
@@ -770,18 +824,64 @@ export default function AccommodationRoom() {
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const [draftForm, setDraftForm] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
   const [confirmedForm, setConfirmedForm] = useState(DEFAULT_ACCOMMODATION_ROOM_INPUTS);
-  const [pendingCommands, setPendingCommands] = useState<PendingCounterCommandMap>({});
-  const [pendingAlarmCommands, setPendingAlarmCommands] = useState<PendingAlarmCommandMap>({});
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
-  const alarmExpireTimeoutsRef = useRef<Map<CarloGavazziAlarmCommandName, ReturnType<typeof setTimeout>>>(new Map());
-  // Refs so effects can read latest state without triggering re-runs.
-  const pendingCommandsRef = useRef(pendingCommands);
-  pendingCommandsRef.current = pendingCommands;
-  const pendingAlarmCommandsRef = useRef(pendingAlarmCommands);
-  pendingAlarmCommandsRef.current = pendingAlarmCommands;
+  const {
+    commands: pendingCommandMap,
+    isPending: isCommandPending,
+    resolveAllCommands,
+    resolveCommand,
+    startCommand,
+  } = usePendingCommand<AccommodationCommandSnapshot>();
+  const [alarmCountdownNow, setAlarmCountdownNow] = useState(() => Date.now());
   const hasHydratedRef = useRef(false);
   const temperatureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const temperatureSnapshotRef = useRef<{
+    previousConfirmedValue: AccommodationRoomInputs[AccommodationEditableKey];
+    previousDraftValue: AccommodationRoomInputs[AccommodationEditableKey];
+  } | null>(null);
+  const commandErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
+
+  const showCommandError = useCallback((message: string) => {
+    setLastCommandError(message);
+
+    if (commandErrorTimeoutRef.current) {
+      clearTimeout(commandErrorTimeoutRef.current);
+    }
+
+    commandErrorTimeoutRef.current = setTimeout(() => {
+      setLastCommandError((current) => (current === message ? null : current));
+      commandErrorTimeoutRef.current = null;
+    }, 2_500);
+  }, []);
+
+  const rollbackCounterCommand = useCallback(
+    (command: PendingCommandState<CounterCommandSnapshot>) => {
+      const { field, previousConfirmedValue, previousDraftValue } = command.snapshot;
+
+      if (field === 'temperatureValue') {
+        setDraftForm((current) => ({
+          ...current,
+          temperatureValue: previousDraftValue as string,
+        }));
+        setConfirmedForm((current) => ({
+          ...current,
+          temperatureValue: previousConfirmedValue as string,
+        }));
+        return;
+      }
+
+      setDraftForm((current) => ({
+        ...current,
+        smokeDetected: previousDraftValue as boolean,
+      }));
+      setConfirmedForm((current) => ({
+        ...current,
+        smokeDetected: previousConfirmedValue as boolean,
+      }));
+    },
+    []
+  );
 
   const clearTemperatureDebounce = useCallback(() => {
     if (!temperatureDebounceRef.current) {
@@ -829,54 +929,136 @@ export default function AccommodationRoom() {
           },
     [metricsTopic.payload]
   );
-  const isAnyAlarmWriteWindowActive = Object.keys(pendingAlarmCommands).length > 0;
+  const pendingCommandEntries = Object.values(pendingCommandMap);
+  const pendingAlarmEntries = pendingCommandEntries.filter(isAlarmCommand);
+  const isAnyAlarmWriteWindowActive = pendingAlarmEntries.length > 0;
 
   const sendSetValueCommand = useCallback(
-    async (field: AccommodationEditableKey, nextMetricValue: number, requestedLabel: string) => {
-      if (status !== 'connected') {
-        setLastCommandError(`MQTT disconnected`);
-        return;
+    async (
+      field: AccommodationEditableKey,
+      nextMetricValue: number,
+      requestedLabel: string,
+      snapshot: {
+        previousConfirmedValue: AccommodationRoomInputs[AccommodationEditableKey];
+        previousDraftValue: AccommodationRoomInputs[AccommodationEditableKey];
       }
-
+    ) => {
+      const commandId = getCounterCommandId(field);
       const counterId =
         field === 'temperatureValue'
           ? CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.temperature
           : CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeStatus;
+
+      if (status !== 'connected') {
+        rollbackCounterCommand({
+          id: commandId,
+          label: requestedLabel,
+          startedAt: Date.now(),
+          expiresAt: Date.now(),
+          snapshot: {
+            kind: 'counter',
+            field,
+            counterId,
+            expectedMetricValue: nextMetricValue,
+            baselineReceivedAt: metricsReceivedAt,
+            previousConfirmedValue: snapshot.previousConfirmedValue,
+            previousDraftValue: snapshot.previousDraftValue,
+          },
+        });
+        showCommandError('MQTT disconnected. Command not sent.');
+        return;
+      }
+
+      if (isCommandPending(commandId)) {
+        showCommandError(`${requestedLabel} is already waiting for gateway response.`);
+        return;
+      }
+
+      const pendingCommand = startCommand({
+        id: commandId,
+        label: requestedLabel,
+        snapshot: {
+          kind: 'counter',
+          field,
+          counterId,
+          expectedMetricValue: nextMetricValue,
+          baselineReceivedAt: metricsReceivedAt,
+          previousConfirmedValue: snapshot.previousConfirmedValue,
+          previousDraftValue: snapshot.previousDraftValue,
+        },
+        onTimeout: (command) => {
+          if (!isCounterCommand(command)) {
+            return;
+          }
+
+          rollbackCounterCommand(command);
+          showCommandError(`${command.label} timed out. Rolled back.`);
+        },
+      });
+
+      if (!pendingCommand) {
+        return;
+      }
 
       try {
         await publishTopic(
           'gatewayOtCommand',
           buildCarloGavazziOtCommand(counterId, 'SetValue', nextMetricValue)
         );
-
-        setPendingCommands((current) => ({
-          ...current,
-          [field]: {
-            counterId,
-            expectedMetricValue: nextMetricValue,
-            requestedLabel,
-            sentAt: Date.now(),
-          },
-        }));
         setLastCommandError(null);
       } catch (error) {
-        setLastCommandError(
-          error instanceof Error ? error.message : `Unable to send ${requestedLabel}.`
-        );
+        resolveCommand(commandId, {
+          onResolve: (command) => {
+            if (!isCounterCommand(command)) {
+              return;
+            }
+
+            rollbackCounterCommand(command);
+          },
+        });
+        showCommandError(error instanceof Error ? error.message : `Unable to send ${requestedLabel}.`);
       }
     },
-    [publishTopic, status]
+    [
+      isCommandPending,
+      metricsReceivedAt,
+      publishTopic,
+      resolveCommand,
+      rollbackCounterCommand,
+      showCommandError,
+      startCommand,
+      status,
+    ]
   );
 
   const sendAlarmCommand = useCallback(
     async (command: CarloGavazziAlarmCommandName, requestedLabel: string) => {
+      const commandId = getAlarmCommandId(command);
+
       if (status !== 'connected') {
-        setLastCommandError(`Disconnected \n ${requestedLabel}.`);
+        showCommandError(`Disconnected. Unable to send ${requestedLabel}.`);
         return;
       }
 
-      if (pendingAlarmCommands[command]) {
-        setLastCommandError(`${requestedLabel} is already in flight — waiting for gateway response.`);
+      if (isCommandPending(commandId)) {
+        showCommandError(`${requestedLabel} is already waiting for gateway response.`);
+        return;
+      }
+
+      const pendingCommand = startCommand({
+        id: commandId,
+        label: requestedLabel,
+        snapshot: {
+          kind: 'alarm',
+          command,
+          baselineReceivedAt: metricsReceivedAt,
+        },
+        onTimeout: (timedOutCommand) => {
+          showCommandError(`${timedOutCommand.label} timed out. Try again.`);
+        },
+      });
+
+      if (!pendingCommand) {
         return;
       }
 
@@ -888,33 +1070,13 @@ export default function AccommodationRoom() {
             command
           )
         );
-        const sentAt = Date.now();
-
-        setPendingAlarmCommands((current) => ({
-          ...current,
-          [command]: { cmd: command, requestedLabel, sentAt, baselineReceivedAt: metricsReceivedAt },
-        }));
         setLastCommandError(null);
-
-        // Silent expiry: clear this command after 5s if metrics never confirm it.
-        const expireId = setTimeout(() => {
-          alarmExpireTimeoutsRef.current.delete(command);
-          setPendingAlarmCommands((current) => {
-            const next = { ...current };
-            delete next[command];
-            return next;
-          });
-          setLastCommandError(null);
-        }, ALARM_WRITE_GUARD_MS);
-
-        alarmExpireTimeoutsRef.current.set(command, expireId);
       } catch (error) {
-        setLastCommandError(
-          error instanceof Error ? error.message : `Unable to send ${requestedLabel}.`
-        );
+        resolveCommand(commandId);
+        showCommandError(error instanceof Error ? error.message : `Unable to send ${requestedLabel}.`);
       }
     },
-    [metricsReceivedAt, pendingAlarmCommands, publishTopic, status]
+    [isCommandPending, metricsReceivedAt, publishTopic, resolveCommand, showCommandError, startCommand, status]
   );
 
   useEffect(() => {
@@ -935,6 +1097,9 @@ export default function AccommodationRoom() {
     return () => {
       isMounted = false;
       clearTemperatureDebounce();
+      if (commandErrorTimeoutRef.current) {
+        clearTimeout(commandErrorTimeoutRef.current);
+      }
     };
   }, [clearTemperatureDebounce]);
 
@@ -959,27 +1124,21 @@ export default function AccommodationRoom() {
     }
 
     clearTemperatureDebounce();
+    temperatureSnapshotRef.current = null;
     const clearPendingTimer = setTimeout(() => {
-      setPendingCommands({});
-      setPendingAlarmCommands({});
+      resolveAllCommands({
+        onResolve: (command) => {
+          if (!isCounterCommand(command)) {
+            return;
+          }
+
+          rollbackCounterCommand(command);
+        },
+      });
     }, 0);
 
     return () => clearTimeout(clearPendingTimer);
-  }, [clearTemperatureDebounce, status]);
-
-  useEffect(() => {
-    if (isAnyAlarmWriteWindowActive) {
-      return;
-    }
-
-    const clearWriteWindowErrorTimer = setTimeout(() => {
-      setLastCommandError((current) =>
-        current?.startsWith('UWP write window is still active') ? null : current
-      );
-    }, 0);
-
-    return () => clearTimeout(clearWriteWindowErrorTimer);
-  }, [isAnyAlarmWriteWindowActive]);
+  }, [clearTemperatureDebounce, resolveAllCommands, rollbackCounterCommand, status]);
 
   useEffect(() => {
     if (!metricsTopic.payload) {
@@ -991,16 +1150,31 @@ export default function AccommodationRoom() {
       metricsState.temperatureNumber === null ? null : Math.round(metricsState.temperatureNumber);
     const nextSmokeMetricValue =
       metricsState.smokeDetected === null ? null : metricsState.smokeDetected ? 1 : 0;
-    const latestPendingCommands = pendingCommandsRef.current;
+    const latestPendingCommands = Object.values(pendingCommandMap).filter(isCounterCommand);
 
-    const temperatureAcked =
-      latestPendingCommands.temperatureValue !== undefined &&
-      nextTemperatureMetricValue !== null &&
-      latestPendingCommands.temperatureValue.expectedMetricValue === nextTemperatureMetricValue;
-    const smokeAcked =
-      latestPendingCommands.smokeDetected !== undefined &&
-      nextSmokeMetricValue !== null &&
-      latestPendingCommands.smokeDetected.expectedMetricValue === nextSmokeMetricValue;
+    const isFreshGatewayResponse = (command: PendingCommandState<CounterCommandSnapshot>) =>
+      metricsReceivedAt !== null &&
+      (command.snapshot.baselineReceivedAt === null
+        ? metricsReceivedAt >= command.startedAt
+        : metricsReceivedAt > command.snapshot.baselineReceivedAt);
+
+    const ackedCounterCommands = latestPendingCommands.filter((command) => {
+      if (!isFreshGatewayResponse(command)) {
+        return false;
+      }
+
+      if (command.snapshot.field === 'temperatureValue') {
+        return (
+          nextTemperatureMetricValue !== null &&
+          command.snapshot.expectedMetricValue === nextTemperatureMetricValue
+        );
+      }
+
+      return (
+        nextSmokeMetricValue !== null &&
+        command.snapshot.expectedMetricValue === nextSmokeMetricValue
+      );
+    });
 
     const processMetricsTimer = setTimeout(() => {
       if (metricsState.temperatureValue !== null || metricsState.smokeDetected !== null) {
@@ -1023,12 +1197,19 @@ export default function AccommodationRoom() {
 
           if (
             metricsState.temperatureValue !== null &&
-            (!latestPendingCommands.temperatureValue || temperatureAcked)
+            (!isCommandPending(getCounterCommandId('temperatureValue')) ||
+              ackedCounterCommands.some(
+                (command) => command.snapshot.field === 'temperatureValue'
+              ))
           ) {
             next.temperatureValue = metricsState.temperatureValue;
           }
 
-          if (metricsState.smokeDetected !== null && (!latestPendingCommands.smokeDetected || smokeAcked)) {
+          if (
+            metricsState.smokeDetected !== null &&
+            (!isCommandPending(getCounterCommandId('smokeDetected')) ||
+              ackedCounterCommands.some((command) => command.snapshot.field === 'smokeDetected'))
+          ) {
             next.smokeDetected = metricsState.smokeDetected;
           }
 
@@ -1036,91 +1217,70 @@ export default function AccommodationRoom() {
         });
       }
 
-      if (temperatureAcked || smokeAcked) {
-        const ackedCommands = [
-          temperatureAcked ? latestPendingCommands.temperatureValue ?? null : null,
-          smokeAcked ? latestPendingCommands.smokeDetected ?? null : null,
-        ]
-          .filter((command): command is PendingCounterCommand => command !== null)
-          .sort((left, right) => left.sentAt - right.sentAt);
-        const latestAckedCommand = ackedCommands[ackedCommands.length - 1] ?? null;
+      if (ackedCounterCommands.length > 0) {
+        const latestAckedCommand =
+          [...ackedCounterCommands].sort((left, right) => left.startedAt - right.startedAt).pop() ??
+          null;
 
-        if (latestAckedCommand) {
+        if (latestAckedCommand && metricsReceivedAt !== null) {
           recordLatencySampleRef.current({
-            label: latestAckedCommand.requestedLabel,
+            label: latestAckedCommand.label,
             requestTopicKey: 'gatewayOtCommand',
             responseTopicKey: 'gatewayMetrics',
-            startedAt: latestAckedCommand.sentAt,
-            completedAt: metricsReceivedAt ?? Date.now(),
+            startedAt: latestAckedCommand.startedAt,
+            completedAt: metricsReceivedAt,
           });
         }
 
-        setPendingCommands((current) => {
-          const next = { ...current };
-
-          if (temperatureAcked) {
-            delete next.temperatureValue;
-          }
-
-          if (smokeAcked) {
-            delete next.smokeDetected;
-          }
-
-          return next;
+        ackedCounterCommands.forEach((command) => {
+          resolveCommand(command.id);
         });
         setLastCommandError(null);
       }
     }, 0);
 
     return () => clearTimeout(processMetricsTimer);
-  }, [metricsReceivedAt, metricsTopic.payload]);
+  }, [isCommandPending, metricsReceivedAt, metricsTopic.payload, pendingCommandMap, resolveCommand]);
 
   useEffect(() => {
     if (metricsReceivedAt === null) {
       return;
     }
 
-    const ackedCommands = (
-      Object.entries(pendingAlarmCommandsRef.current) as [CarloGavazziAlarmCommandName, PendingAlarmCommand][]
-    ).filter(
-      ([, pending]) =>
-        pending.baselineReceivedAt === null || metricsReceivedAt > pending.baselineReceivedAt
+    const ackedCommands = Object.values(pendingCommandMap).filter(
+      (command): command is PendingCommandState<AlarmCommandSnapshot> =>
+        isAlarmCommand(command) &&
+        (command.snapshot.baselineReceivedAt === null
+          ? metricsReceivedAt >= command.startedAt
+          : metricsReceivedAt > command.snapshot.baselineReceivedAt)
     );
 
     if (ackedCommands.length === 0) {
       return;
     }
 
-    // Cancel the 5s silent expiry timers — metrics arrived first.
-    ackedCommands.forEach(([command]) => {
-      const expireId = alarmExpireTimeoutsRef.current.get(command);
-      if (expireId !== undefined) {
-        clearTimeout(expireId);
-        alarmExpireTimeoutsRef.current.delete(command);
-      }
-    });
-
-    const latestAcked = ackedCommands.sort((left, right) => left[1].sentAt - right[1].sentAt).pop()!;
+    const latestAcked = [...ackedCommands].sort((left, right) => left.startedAt - right.startedAt).pop()!;
     recordLatencySampleRef.current({
-      label: latestAcked[1].requestedLabel,
+      label: latestAcked.label,
       requestTopicKey: 'gatewayOtCommand',
       responseTopicKey: 'gatewayMetrics',
-      startedAt: latestAcked[1].sentAt,
+      startedAt: latestAcked.startedAt,
       completedAt: metricsReceivedAt,
     });
 
-    setPendingAlarmCommands((current) => {
-      const next = { ...current };
-      ackedCommands.forEach(([command]) => {
-        delete next[command];
-      });
-      return next;
+    ackedCommands.forEach((command) => {
+      resolveCommand(command.id);
     });
     setLastCommandError(null);
-  }, [metricsReceivedAt]);
+  }, [metricsReceivedAt, pendingCommandMap, resolveCommand]);
 
   const handleSmokeDetectedChange = useCallback(
     (nextValue: boolean) => {
+      const snapshot = {
+        previousConfirmedValue: getAccommodationFieldValue(confirmedForm, 'smokeDetected'),
+        previousDraftValue: getAccommodationFieldValue(draftForm, 'smokeDetected'),
+      };
+
       setDraftForm((current) => ({
         ...current,
         smokeDetected: nextValue,
@@ -1129,15 +1289,23 @@ export default function AccommodationRoom() {
       void sendSetValueCommand(
         'smokeDetected',
         nextValue ? 1 : 0,
-        `Smoke Status ${nextValue ? 'Detected' : 'Clear'}`
+        `Smoke Status ${nextValue ? 'Detected' : 'Clear'}`,
+        snapshot
       );
     },
-    [sendSetValueCommand]
+    [confirmedForm, draftForm, sendSetValueCommand]
   );
 
   const handleTemperatureChange = useCallback(
     (nextValue: string) => {
       const nextTemperature = parseAccommodationTemperature(nextValue);
+
+      if (!temperatureSnapshotRef.current) {
+        temperatureSnapshotRef.current = {
+          previousConfirmedValue: getAccommodationFieldValue(confirmedForm, 'temperatureValue'),
+          previousDraftValue: getAccommodationFieldValue(draftForm, 'temperatureValue'),
+        };
+      }
 
       setDraftForm((current) => ({
         ...current,
@@ -1146,23 +1314,54 @@ export default function AccommodationRoom() {
 
       clearTemperatureDebounce();
       temperatureDebounceRef.current = setTimeout(() => {
+        const snapshot = temperatureSnapshotRef.current ?? {
+          previousConfirmedValue: getAccommodationFieldValue(confirmedForm, 'temperatureValue'),
+          previousDraftValue: getAccommodationFieldValue(draftForm, 'temperatureValue'),
+        };
+        temperatureSnapshotRef.current = null;
+
         void sendSetValueCommand(
           'temperatureValue',
           nextTemperature,
-          `Temperature ${formatAccommodationTemperature(nextTemperature)}`
+          `Temperature ${formatAccommodationTemperature(nextTemperature)}`,
+          snapshot
         );
       }, COMMAND_DEBOUNCE_MS);
     },
-    [clearTemperatureDebounce, sendSetValueCommand]
+    [clearTemperatureDebounce, confirmedForm, draftForm, sendSetValueCommand]
   );
 
-  const isTemperaturePending = pendingCommands.temperatureValue !== undefined;
-  const isSmokePending = pendingCommands.smokeDetected !== undefined;
-  const isAlarmPending = Object.keys(pendingAlarmCommands).length > 0;
+  const pendingTemperatureCommand = pendingCommandMap[getCounterCommandId('temperatureValue')] ?? null;
+  const pendingSmokeCommand = pendingCommandMap[getCounterCommandId('smokeDetected')] ?? null;
+  const isTemperaturePending = pendingTemperatureCommand !== null;
+  const isSmokePending = pendingSmokeCommand !== null;
+  const isAlarmPending = pendingAlarmEntries.length > 0;
   const isAlarmCommandLocked = useCallback(
-    (command: CarloGavazziAlarmCommandName) => !!pendingAlarmCommands[command],
-    [pendingAlarmCommands]
+    (command: CarloGavazziAlarmCommandName) => !!pendingCommandMap[getAlarmCommandId(command)],
+    [pendingCommandMap]
   );
+  const getAlarmCommandCountdown = useCallback(
+    (command: CarloGavazziAlarmCommandName) => {
+      const pending = pendingCommandMap[getAlarmCommandId(command)];
+      if (!pending) {
+        return null;
+      }
+      const remainingMs = pending.expiresAt - alarmCountdownNow;
+      return Math.max(0, Math.ceil(remainingMs / 1000));
+    },
+    [alarmCountdownNow, pendingCommandMap]
+  );
+
+  useEffect(() => {
+    if (!isAlarmPending) {
+      return;
+    }
+
+    setAlarmCountdownNow(Date.now());
+    const intervalId = setInterval(() => setAlarmCountdownNow(Date.now()), 1_000);
+
+    return () => clearInterval(intervalId);
+  }, [isAlarmPending]);
   const isAnyPending = isTemperaturePending || isSmokePending || isAlarmPending;
   const lastMetricsAt = metricsReceivedAt;
   const lastAlarmMetricsAt = alarmState.lastSignalAt ?? lastMetricsAt;
@@ -1174,8 +1373,8 @@ export default function AccommodationRoom() {
   const mqttLinkMeta = getMqttLinkMeta(status, latestAlarmRoundtripMs, isAlarmPending);
   const writeWindowLabel = isAnyAlarmWriteWindowActive ? 'Sending…' : 'Ready';
   const writeWindowDetail = isAnyAlarmWriteWindowActive
-    ? 'Waiting for gateway response'
-    : 'Next edge can be sent';
+    ? 'Auto-clears on reply or after 5s'
+    : 'Ready to send';
 
   const heroSyncLabel = useMemo(() => {
     if (status !== 'connected') {
@@ -1212,7 +1411,7 @@ export default function AccommodationRoom() {
 
     if (isSmokePending) {
       return `Request ${
-        pendingCommands.smokeDetected?.requestedLabel ?? 'Smoke Status'
+        pendingSmokeCommand?.label ?? 'Smoke Status'
       }.`;
     }
 
@@ -1225,7 +1424,7 @@ export default function AccommodationRoom() {
     }
 
     return 'Smoke status follows the confirmed value returned by the gateway metrics.';
-  }, [isSmokePending, lastCommandError, lastMetricsAt, pendingCommands.smokeDetected, status]);
+  }, [isSmokePending, lastCommandError, lastMetricsAt, pendingSmokeCommand, status]);
 
   const temperatureHint = useMemo(() => {
     if (lastCommandError && isTemperaturePending) {
@@ -1234,7 +1433,7 @@ export default function AccommodationRoom() {
 
     if (isTemperaturePending) {
       return `Requested ${
-        pendingCommands.temperatureValue?.requestedLabel ?? draftForm.temperatureValue
+        pendingTemperatureCommand?.label ?? draftForm.temperatureValue
       }.`;
     }
 
@@ -1255,18 +1454,16 @@ export default function AccommodationRoom() {
     isTemperaturePending,
     lastCommandError,
     lastMetricsAt,
-    pendingCommands.temperatureValue,
+    pendingTemperatureCommand,
     status,
   ]);
   const latestPendingAlarmCommand = useMemo(() => {
-    const pendingEntries = Object.values(pendingAlarmCommands) as PendingAlarmCommand[];
-
-    if (pendingEntries.length === 0) {
+    if (pendingAlarmEntries.length === 0) {
       return null;
     }
 
-    return pendingEntries.sort((left, right) => left.sentAt - right.sentAt).pop() ?? null;
-  }, [pendingAlarmCommands]);
+    return [...pendingAlarmEntries].sort((left, right) => left.startedAt - right.startedAt).pop() ?? null;
+  }, [pendingAlarmEntries]);
 
   const alarmHint = useMemo(() => {
     if (lastCommandError && latestPendingAlarmCommand) {
@@ -1274,7 +1471,7 @@ export default function AccommodationRoom() {
     }
 
     if (latestPendingAlarmCommand) {
-      return `${latestPendingAlarmCommand.requestedLabel} sent — waiting for gateway metrics to confirm.`;
+      return `${latestPendingAlarmCommand.label} sent · waiting for gateway.`;
     }
 
     if (status !== 'connected') {
@@ -1290,17 +1487,17 @@ export default function AccommodationRoom() {
 
   const alarmCommandHint = useMemo(() => {
     if (latestPendingAlarmCommand) {
-      return `${latestPendingAlarmCommand.cmd} → device ${CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId}. Clears when metrics arrive or after 5s.`;
+      return `${latestPendingAlarmCommand.snapshot.command} sent · auto-clears on reply or after 5s.`;
     }
 
-    return 'Pulse actions like Reset or Acknowledge are safest for repeated retries.';
+    return 'Reset and Acknowledge are safe to retry.';
   }, [latestPendingAlarmCommand]);
   const alarmBehaviorHint = useMemo(() => {
     if (isAnyAlarmWriteWindowActive) {
-      return 'Command sent — clears automatically when gateway responds or after 5s.';
+      return 'Sent · auto-clears on reply or after 5s.';
     }
 
-    return 'If ResetOn, ResetOff, TestAlarmOn, or TestAlarmOff seem ignored, create a new edge first or use pulse commands such as Reset and Acknowledge.';
+    return 'ResetOn/Off and Alarm ON/OFF may need a fresh edge; Reset and Acknowledge retry safely.';
   }, [isAnyAlarmWriteWindowActive]);
 
   return (
@@ -1319,6 +1516,8 @@ export default function AccommodationRoom() {
           heatingState={zoneHeatingState}
           smokeHint={smokeHint}
           temperatureHint={temperatureHint}
+          isSmokePending={isSmokePending}
+          isTemperaturePending={isTemperaturePending}
           onSmokeChange={handleSmokeDetectedChange}
           onTemperatureChange={handleTemperatureChange}
         />
@@ -1332,6 +1531,7 @@ export default function AccommodationRoom() {
           behaviorHint={alarmBehaviorHint}
           isConnected={status === 'connected'}
           isCommandLocked={isAlarmCommandLocked}
+          getCommandCountdown={getAlarmCommandCountdown}
           isPending={isAlarmPending}
           mqttLinkLabel={mqttLinkMeta.label}
           mqttLinkDetail={mqttLinkMeta.detail}

@@ -41,6 +41,8 @@ export type MqttConnectionState = 'idle' | 'connecting' | 'connected' | 'disconn
 // Broker session can stay "connected" while the physical gateway has gone silent;
 // this window flags that the last metrics message is too old to trust.
 export const GATEWAY_STALE_AFTER_MS = 60_000;
+// How often the app fires a loopback latency probe while connected.
+export const LATENCY_PING_INTERVAL_MS = 5_000;
 export type MqttLogLevel = 'info' | 'success' | 'warning' | 'error';
 export type MqttPublishOptions = Pick<IClientPublishOptions, 'qos' | 'retain'>;
 export type MqttMessageSource = 'broker' | 'local-publish' | 'cache';
@@ -101,6 +103,9 @@ type MqttContextValue = {
   lastConnectedAt: number | null;
   lastGatewaySignalAt: number | null;
   latestLatencySample: MqttLatencySample | null;
+  // Live broker round-trip latency (ms) from the loopback probe, or null until the
+  // first echo arrives / while disconnected.
+  latestPingLatencyMs: number | null;
   logs: MqttLogEntry[];
   publishTopic: PublishTopicFn;
   recordLatencySample: (sample: RecordLatencySampleInput) => void;
@@ -164,6 +169,9 @@ export function MqttProvider({ children }: PropsWithChildren) {
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [lastConnectedAt, setLastConnectedAt] = useState<number | null>(null);
   const [latestLatencySample, setLatestLatencySample] = useState<MqttLatencySample | null>(null);
+  const [latestPingLatencyMs, setLatestPingLatencyMs] = useState<number | null>(null);
+  // Nonce + start time of the loopback probe we are currently waiting to hear back.
+  const pendingPingRef = useRef<{ nonce: string; startedAt: number } | null>(null);
   const [topicMessages, setTopicMessages] = useState<MqttTopicMessages>({});
   const [logs, setLogs] = useState<MqttLogEntry[]>([
     {
@@ -238,13 +246,20 @@ export function MqttProvider({ children }: PropsWithChildren) {
           return;
         }
 
-        client.subscribe(definition.topic, { qos: definition.qos ?? 0 }, (error) => {
-          if (error) {
-            appendLog('error', `Failed to subscribe ${definition.label}: ${error.message}`);
-            return;
-          }
+        // A definition may fan out to several physical topics (the gateway now
+        // splits metrics across metrics/pressure-transmitter/acc-room), all
+        // routed back into one store — subscribe to every one.
+        const topics = definition.subscribeTopics ?? [definition.topic];
 
-          appendLog('success', `Subscribed ${definition.label}.`);
+        topics.forEach((topic) => {
+          client.subscribe(topic, { qos: definition.qos ?? 0 }, (error) => {
+            if (error) {
+              appendLog('error', `Failed to subscribe ${definition.label} (${topic}): ${error.message}`);
+              return;
+            }
+
+            appendLog('success', `Subscribed ${definition.label} (${topic}).`);
+          });
         });
       });
     },
@@ -417,6 +432,18 @@ export function MqttProvider({ children }: PropsWithChildren) {
           const rawPayload = messageBuffer.toString();
           const payload = definition.parse(rawPayload);
 
+          // Loopback latency probe echoed back by the broker — time the round trip
+          // and skip the topic store (it is not gateway data).
+          if (definition.key === 'appLatencyPing') {
+            const pingPayload = payload as MqttTopicPayloadMap['appLatencyPing'];
+            const pending = pendingPingRef.current;
+            if (pending && pending.nonce === pingPayload.nonce) {
+              pendingPingRef.current = null;
+              setLatestPingLatencyMs(Math.max(0, Date.now() - pending.startedAt));
+            }
+            return;
+          }
+
           setTopicMessages((currentMessages) => {
             if (definition.key === 'gatewayMetrics') {
               const previousMessage = currentMessages.gatewayMetrics;
@@ -424,10 +451,14 @@ export function MqttProvider({ children }: PropsWithChildren) {
               const previousMetricsPayload = previousMessage?.payload as
                 | MqttTopicPayloadMap['gatewayMetrics']
                 | undefined;
-              const mergedPayload =
-                previousMetricsPayload && previousMessage?.source === 'broker'
-                  ? mergeCarloGavazziMetricsPayload(previousMetricsPayload, nextMetricsPayload)
-                  : nextMetricsPayload;
+              // Metrics now arrive split across three topics, each a partial
+              // snapshot (disjoint devices). Always merge (union by device id)
+              // onto whatever we had — broker OR the disk cache — so devices from
+              // the other topics stay visible instead of flickering away until
+              // their own topic next ticks.
+              const mergedPayload = previousMetricsPayload
+                ? mergeCarloGavazziMetricsPayload(previousMetricsPayload, nextMetricsPayload)
+                : nextMetricsPayload;
 
               // Persist to disk so cold-start shows last known data.
               void writeMetricsCache(mergedPayload);
@@ -550,6 +581,40 @@ export function MqttProvider({ children }: PropsWithChildren) {
     lastGatewaySignalAt !== null &&
     staleCheckNow - lastGatewaySignalAt > GATEWAY_STALE_AFTER_MS;
 
+  // Live latency probe: while connected, publish a self-addressed ping and time
+  // the broker's echo. Fires immediately on connect, then every interval. Safe —
+  // it round-trips through the broker only, never the gateway/PLC.
+  useEffect(() => {
+    if (status !== 'connected') {
+      pendingPingRef.current = null;
+      setLatestPingLatencyMs(null);
+      return;
+    }
+
+    const sendPing = () => {
+      const client = clientRef.current;
+      if (!client || !client.connected) {
+        return;
+      }
+
+      const nonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const startedAt = Date.now();
+      pendingPingRef.current = { nonce, startedAt };
+
+      const definition = MQTT_TOPICS.appLatencyPing;
+      client.publish(
+        definition.topic,
+        definition.serialize({ nonce, sentAt: startedAt }),
+        { qos: definition.qos ?? 0 }
+      );
+    };
+
+    sendPing();
+    const intervalId = setInterval(sendPing, LATENCY_PING_INTERVAL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [status]);
+
   const value = useMemo<MqttContextValue>(
     () => ({
       clearLogs,
@@ -564,6 +629,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
       lastConnectedAt,
       lastGatewaySignalAt,
       latestLatencySample,
+      latestPingLatencyMs,
       logs,
       publishTopic,
       recordLatencySample,
@@ -586,6 +652,7 @@ export function MqttProvider({ children }: PropsWithChildren) {
       lastConnectedAt,
       lastGatewaySignalAt,
       latestLatencySample,
+      latestPingLatencyMs,
       logs,
       publishTopic,
       recordLatencySample,
