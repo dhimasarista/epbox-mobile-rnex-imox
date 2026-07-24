@@ -212,6 +212,11 @@ export function MqttProvider({ children }: PropsWithChildren) {
 
     if (client) {
       client.removeAllListeners();
+      // mqtt.js keeps a pending connack-timeout timer that can still fire AFTER we
+      // detach listeners (e.g. we reconnect while an old socket is mid-handshake).
+      // Without a listener that late 'error' becomes an uncaught red error in RN,
+      // so keep a no-op swallow in place while we tear the client down.
+      client.on('error', () => {});
       client.end(true);
       clientRef.current = null;
     }
