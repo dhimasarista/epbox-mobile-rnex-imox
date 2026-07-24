@@ -253,49 +253,53 @@ function GatewayWordDisplay({ doWord, simulation }: { doWord: number; simulation
   );
 }
 
-function DoStatusRow({
+function DoStatusCard({
   ch,
   value,
-  bitIndex,
+  channelNumber,
   simulation,
   onToggle,
 }: {
   ch: (typeof DO_CHANNELS)[number];
   value: boolean;
-  bitIndex: number;
+  channelNumber: number;
   simulation: boolean;
   onToggle?: () => void;
 }) {
   const activeColor = AppColors.success;
   const body = (
     <>
-      <View style={s.doLeft}>
+      <View style={s.doCardTop}>
         <View style={[s.doIndicator, { backgroundColor: value ? activeColor : AppColors.border }]} />
-        <Text style={s.diLabel} numberOfLines={1}>{ch.label}</Text>
-        <Text style={s.doBitTag}>b{bitIndex}</Text>
+        <Text style={s.doCardChannel}>{channelNumber}</Text>
       </View>
-      <View style={[s.doStatusPill, value && { backgroundColor: activeColor, borderColor: activeColor }]}>
-        <Text style={[s.doStatusPillText, value && s.doStatusPillTextOn]}>{value ? 'ON' : 'OFF'}</Text>
+      <View style={s.doCardIcon}>
+        <View style={[s.doCardIconBadge, value && s.doCardIconBadgeActive]}>
+          <Feather name="power" size={22} color={value ? AppColors.textInverse : AppColors.textSubtle} />
+        </View>
       </View>
+      <Text style={[s.doCardLabel, value && { color: activeColor }]} numberOfLines={2}>
+        {ch.label}
+      </Text>
     </>
   );
-  const rowStyle = [s.doRow, value && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' }];
+  const cardStyle = [s.doCard, value && s.doCardActive];
 
-  // Simulation: whole row is a toggle (tap to flip the bit). Connected: read-only.
+  // Simulation: whole card is a toggle (tap to flip the bit). Connected: read-only.
   if (simulation && onToggle) {
     return (
       <TouchableOpacity
-        style={rowStyle}
+        style={cardStyle}
         onPress={onToggle}
         activeOpacity={0.7}
         accessibilityRole="switch"
         accessibilityState={{ checked: value }}
-        accessibilityLabel={`${ch.label} (bit ${bitIndex})`}>
+        accessibilityLabel={`${ch.label} (channel ${channelNumber})`}>
         {body}
       </TouchableOpacity>
     );
   }
-  return <View style={rowStyle}>{body}</View>;
+  return <View style={cardStyle}>{body}</View>;
 }
 
 // ─── TO PLC tab sub-components ───────────────────────────────────────────────
@@ -1016,13 +1020,13 @@ export default function PumpRoom() {
                   {isSimulation ? 'Simulasi · tekan ON/OFF' : 'Status · read-only'}
                 </Text>
               </View>
-              <View style={s.doStack}>
+              <View style={s.doGrid}>
                 {DO_CHANNELS.map((ch) => (
-                  <DoStatusRow
+                  <DoStatusCard
                     key={ch.key}
                     ch={ch}
                     value={doState[ch.key]}
-                    bitIndex={DO_BIT_MAP[ch.key].bitIndex}
+                    channelNumber={DO_BIT_MAP[ch.key].bitIndex}
                     simulation={isSimulation}
                     onToggle={() => toggleDoChannel(ch.key)}
                   />
@@ -1171,30 +1175,35 @@ const s = StyleSheet.create({
   },
   sectionBadgeDo: { color: AppColors.primary, backgroundColor: AppColors.surfaceAccent, borderColor: '#F5D3C5' },
 
-  diLabel: { fontSize: 13, fontWeight: '700', color: AppColors.text, flexShrink: 1 },
-  doBitTag: {
-    fontSize: 10, fontWeight: '800', color: AppColors.textSubtle,
-    backgroundColor: AppColors.surfaceMuted, borderRadius: AppRadii.sm,
-    paddingHorizontal: 6, paddingVertical: 2, overflow: 'hidden',
-    fontVariant: ['tabular-nums'], flexShrink: 0,
-  },
-
-  doStack: { gap: AppSpacing.sm },
-  doRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    gap: AppSpacing.md, backgroundColor: AppColors.surface,
-    borderRadius: AppRadii.lg, borderWidth: 1, borderColor: AppColors.border,
-    paddingHorizontal: AppSpacing.md, paddingVertical: AppSpacing.md,
-  },
-  doLeft: { flexDirection: 'row', alignItems: 'center', gap: AppSpacing.sm, flex: 1, minWidth: 0 },
   doIndicator: { width: 10, height: 10, borderRadius: AppRadii.full, flexShrink: 0 },
-  doStatusPill: {
-    minWidth: 56, height: 32, borderRadius: AppRadii.full,
-    backgroundColor: AppColors.surfaceMuted, borderWidth: 1, borderColor: AppColors.border,
-    alignItems: 'center', justifyContent: 'center', paddingHorizontal: AppSpacing.md,
+
+  doGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: AppSpacing.sm },
+  doCard: {
+    flexGrow: 1,
+    flexBasis: '22%',
+    minWidth: 72,
+    backgroundColor: AppColors.surface,
+    borderRadius: AppRadii.lg,
+    borderWidth: 1,
+    borderColor: AppColors.border,
+    paddingHorizontal: AppSpacing.md,
+    paddingVertical: AppSpacing.md,
+    gap: AppSpacing.sm,
   },
-  doStatusPillText: { fontSize: 12, fontWeight: '800', color: AppColors.textSubtle, letterSpacing: 0.5 },
-  doStatusPillTextOn: { color: AppColors.textInverse },
+  doCardActive: { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' },
+  doCardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  doCardChannel: {
+    fontSize: 12, fontWeight: '800', color: AppColors.textSubtle,
+    fontVariant: ['tabular-nums'],
+  },
+  doCardIcon: { alignItems: 'center', justifyContent: 'center', paddingVertical: 6 },
+  doCardIconBadge: {
+    width: 44, height: 44, borderRadius: AppRadii.full,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: AppColors.surfaceMuted,
+  },
+  doCardIconBadgeActive: { backgroundColor: AppColors.success },
+  doCardLabel: { fontSize: 12, fontWeight: '700', color: AppColors.text, textAlign: 'center' },
 
   pumpActBtn: {
     flexDirection: 'row',
