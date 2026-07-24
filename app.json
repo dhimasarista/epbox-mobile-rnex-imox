@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "epbox-mobile-rnex-imox",
-    "slug": "epbox-mobile-rnex-imox",
+    "slug": "imox",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
