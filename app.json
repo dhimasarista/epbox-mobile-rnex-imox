@@ -46,6 +46,16 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "expo-status-bar": {
+        "style": "light"
+      },
+      "eas": {
+        "projectId": "356b3d6b-db4e-42be-a574-8aec14630de6"
+      }
+    },
+    "owner": "22archmage"
   }
 }
