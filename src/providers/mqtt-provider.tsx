@@ -74,7 +74,7 @@ export type MqttTopicMessage<TKey extends MqttTopicKey = MqttTopicKey> = {
 
 type MqttTopicMessages = Partial<Record<MqttTopicKey, MqttTopicMessage>>;
 
-type PublishTopicFn = <TKey extends MqttTopicKey>(
+export type PublishTopicFn = <TKey extends MqttTopicKey>(
   topicKey: TKey,
   payload: MqttTopicPayloadMap[TKey],
   options?: MqttPublishOptions

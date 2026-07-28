@@ -1,18 +1,29 @@
 import { Slider } from '@expo/ui/community/slider';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   DEFAULT_ACCOMMODATION_ROOM_INPUTS,
+  formatAccommodationSmokeDensity,
   formatAccommodationTemperature,
   getStoredAccommodationRoomInputs,
+  parseAccommodationSmokeDensity,
   parseAccommodationTemperature,
   setStoredAccommodationRoomInputs,
+  SMOKE_DENSITY_MAX_PPM,
+  SMOKE_DENSITY_MIN_PPM,
   type AccommodationRoomInputs,
 } from '@/lib/accommodation-room-demo';
+import { useAutoCooldown, type CooldownTarget } from '@/hooks/use-auto-cooldown';
+import {
+  AUTO_PUMP_DENSITY_OFF_PPM,
+  AUTO_PUMP_DENSITY_ON_PPM,
+  AUTO_PUMP_TEMP_OFF_C,
+  useAutoPumpActivation,
+} from '@/hooks/use-auto-pump-activation';
 import {
   DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
   usePendingCommand,
@@ -38,7 +49,7 @@ const ACCOMMODATION_TEMP_ALERT_C = 55;
 const ACCOMMODATION_TEMP_MAX_C = 120;
 const COMMAND_DEBOUNCE_MS = 250;
 
-type AccommodationEditableKey = 'smokeDetected' | 'temperatureValue';
+type AccommodationEditableKey = 'temperatureValue' | 'smokeDensityValue';
 type AccommodationEditableValue = AccommodationRoomInputs[AccommodationEditableKey];
 type CounterCommandSnapshot = {
   kind: 'counter';
@@ -80,7 +91,7 @@ function getAccommodationFieldValue(
   form: AccommodationRoomInputs,
   field: AccommodationEditableKey
 ) {
-  return field === 'temperatureValue' ? form.temperatureValue : form.smokeDetected;
+  return field === 'temperatureValue' ? form.temperatureValue : form.smokeDensityValue;
 }
 
 function getAccommodationTemperatureSignalTone(value: number): SignalTone {
@@ -222,18 +233,36 @@ function AccommodationRoomHero({
   syncLabel,
   syncHint,
   isPending,
+  isCooldownSimEnabled,
+  onToggleCooldownSim,
 }: {
   syncLabel: string;
   syncHint: string;
   isPending: boolean;
+  isCooldownSimEnabled: boolean;
+  onToggleCooldownSim: () => void;
 }) {
   return (
     <View style={styles.heroCard}>
       <View style={styles.heroTopRow}>
-        <View style={styles.heroBadge}>
-          <MaterialCommunityIcons name="bed-outline" size={14} color={AppColors.primary} />
-          <Text style={styles.heroBadgeText}>{syncLabel}</Text>
-        </View>
+        {/* Sync badge doubles as the cooldown-simulation switch: tap to stop the
+            auto temperature / smoke-density decrease while a pump is running. */}
+        <TouchableOpacity
+          style={[styles.heroBadge, !isCooldownSimEnabled && { opacity: 0.55 }]}
+          onPress={onToggleCooldownSim}
+          activeOpacity={0.8}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: isCooldownSimEnabled }}
+          accessibilityLabel="Auto cooldown simulation">
+          <MaterialCommunityIcons
+            name={isCooldownSimEnabled ? 'bed-outline' : 'pause'}
+            size={14}
+            color={AppColors.primary}
+          />
+          <Text style={styles.heroBadgeText}>
+            {isCooldownSimEnabled ? syncLabel : `${syncLabel} · Sim Off`}
+          </Text>
+        </TouchableOpacity>
         <View style={styles.liveChip}>
           <View
             style={[
@@ -274,84 +303,6 @@ function EngineeringSignalBands({ tone }: { tone: SignalTone }) {
           tone === 'danger' && styles.signalBandActive,
         ]}
       />
-    </View>
-  );
-}
-
-function getToggleTheme() {
-  return {
-    surface: AppColors.surfaceError,
-    border: '#F6B1B1',
-    icon: AppColors.error,
-  };
-}
-
-function AccommodationToggleField({
-  label,
-  value,
-  confirmedValue,
-  activeText,
-  inactiveText,
-  activeIcon,
-  inactiveIcon,
-  hint,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: boolean;
-  confirmedValue: boolean;
-  activeText: string;
-  inactiveText: string;
-  activeIcon: ComponentProps<typeof Feather>['name'];
-  inactiveIcon: ComponentProps<typeof Feather>['name'];
-  hint: string;
-  disabled: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  const theme = getToggleTheme();
-
-  return (
-    <View style={styles.dashboardFieldBlock}>
-      <View style={styles.dashboardControlCard}>
-        <View style={styles.dashboardToggleRow}>
-          <View>
-            <Text style={styles.fieldLabel}>{label}</Text>
-            <Text style={styles.dashboardToggleValue}>
-              {confirmedValue ? activeText : inactiveText}
-            </Text>
-          </View>
-
-          <TouchableOpacity
-            activeOpacity={0.92}
-            disabled={disabled}
-            onPress={() => onChange(!value)}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: value, disabled }}
-            accessibilityLabel={label}
-            style={[
-              styles.alarmToggle,
-              value
-                ? { backgroundColor: theme.surface, borderColor: theme.border }
-                : styles.alarmToggleInactive,
-              disabled && styles.alarmCommandButtonDisabled,
-            ]}>
-            <View
-              style={[
-                styles.alarmToggleThumb,
-                value ? styles.alarmToggleThumbActive : styles.alarmToggleThumbInactive,
-              ]}>
-              <Feather
-                name={value ? activeIcon : inactiveIcon}
-                size={14}
-                color={value ? theme.icon : AppColors.textSubtle}
-              />
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* <Text style={styles.dashboardControlHint}>{hint}</Text> */}
-      </View>
     </View>
   );
 }
@@ -552,6 +503,86 @@ function AccommodationTemperatureField({
         </View>
 
         {/* <Text style={styles.dashboardControlHint}>{hint}</Text> */}
+      </View>
+    </View>
+  );
+}
+
+function getAccommodationSmokeDensityTone(value: number): SignalTone {
+  if (value >= AUTO_PUMP_DENSITY_ON_PPM) {
+    return 'danger';
+  }
+
+  if (value >= AUTO_PUMP_DENSITY_OFF_PPM) {
+    return 'warning';
+  }
+
+  return 'normal';
+}
+
+// Smoke density mirrors the temperature control (counter, 0–15 ppm). The MQTT
+// device id is wired later; until then this stays a local slider (see the null
+// counterIds.smokeDensity guard in the change handler).
+function AccommodationSmokeDensityField({
+  confirmedValue,
+  draftValue,
+  disabled,
+  onChange,
+}: {
+  confirmedValue: string;
+  draftValue: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const confirmedDensity = parseAccommodationSmokeDensity(confirmedValue);
+  const draftDensity = parseAccommodationSmokeDensity(draftValue);
+  const signalTone = getAccommodationSmokeDensityTone(confirmedDensity);
+  const signalPalette = getSignalPalette(signalTone);
+
+  return (
+    <View style={styles.dashboardFieldBlock}>
+      <View style={styles.dashboardControlCard}>
+        <View style={styles.dashboardControlHeader}>
+          <Text style={styles.fieldLabel}>Smoke Density</Text>
+          <View
+            style={[
+              styles.signalValueChip,
+              { backgroundColor: signalPalette.surface, borderColor: signalPalette.border },
+            ]}>
+            <View style={[styles.signalValueDot, { backgroundColor: signalPalette.accent }]} />
+            <Text style={[styles.signalValueText, { color: signalPalette.text }]}>
+              {formatAccommodationSmokeDensity(confirmedDensity)}
+            </Text>
+          </View>
+        </View>
+
+        <View
+          style={[
+            styles.signalSliderShell,
+            signalTone === 'normal' && styles.signalSliderShellNormal,
+            signalTone === 'warning' && styles.signalSliderShellWarning,
+            signalTone === 'danger' && styles.signalSliderShellDanger,
+          ]}>
+          <Slider
+            value={draftDensity}
+            minimumValue={SMOKE_DENSITY_MIN_PPM}
+            maximumValue={SMOKE_DENSITY_MAX_PPM}
+            step={1}
+            minimumTrackTintColor={signalPalette.accent}
+            maximumTrackTintColor={signalPalette.track}
+            thumbTintColor={signalPalette.accent}
+            disabled={disabled}
+            onValueChange={(nextValue) => onChange(formatAccommodationSmokeDensity(nextValue))}
+            style={styles.dashboardPressureSlider}
+          />
+
+          <EngineeringSignalBands tone={signalTone} />
+        </View>
+
+        <View style={styles.sliderRangeRow}>
+          <Text style={styles.sliderRangeText}>{SMOKE_DENSITY_MIN_PPM} ppm</Text>
+          <Text style={styles.sliderRangeText}>{SMOKE_DENSITY_MAX_PPM} ppm</Text>
+        </View>
       </View>
     </View>
   );
@@ -788,38 +819,23 @@ function AccommodationSourceSection({
   confirmedForm,
   draftForm,
   heatingState,
-  smokeHint,
   temperatureHint,
-  isSmokePending,
   isTemperaturePending,
-  onSmokeChange,
+  isSmokeDensityPending,
   onTemperatureChange,
+  onSmokeDensityChange,
 }: {
   confirmedForm: AccommodationRoomInputs;
   draftForm: AccommodationRoomInputs;
   heatingState: AccommodationRoomZoneHeatingState;
-  smokeHint: string;
   temperatureHint: string;
-  isSmokePending: boolean;
   isTemperaturePending: boolean;
-  onSmokeChange: (value: boolean) => void;
+  isSmokeDensityPending: boolean;
   onTemperatureChange: (value: string) => void;
+  onSmokeDensityChange: (value: string) => void;
 }) {
   return (
     <View style={styles.sectionCard}>
-      <AccommodationToggleField
-        label="Smoke Detected"
-        value={draftForm.smokeDetected}
-        confirmedValue={confirmedForm.smokeDetected}
-        activeText="Detected"
-        inactiveText="Clear"
-        activeIcon="cloud-lightning"
-        inactiveIcon="wind"
-        hint={smokeHint}
-        disabled={isSmokePending}
-        onChange={onSmokeChange}
-      />
-
       <AccommodationTemperatureField
         confirmedValue={confirmedForm.temperatureValue}
         draftValue={draftForm.temperatureValue}
@@ -827,6 +843,13 @@ function AccommodationSourceSection({
         heatingState={heatingState}
         disabled={isTemperaturePending}
         onChange={onTemperatureChange}
+      />
+
+      <AccommodationSmokeDensityField
+        confirmedValue={confirmedForm.smokeDensityValue}
+        draftValue={draftForm.smokeDensityValue}
+        disabled={isSmokeDensityPending}
+        onChange={onSmokeDensityChange}
       />
     </View>
   );
@@ -848,9 +871,17 @@ export default function AccommodationRoom() {
     startCommand,
   } = usePendingCommand<AccommodationCommandSnapshot>();
   const [alarmCountdownNow, setAlarmCountdownNow] = useState(() => Date.now());
+  // When off, the auto temperature / smoke-density cooldown does not run even while
+  // a pump is reported running (toggled from the hero sync badge).
+  const [isCooldownSimEnabled, setIsCooldownSimEnabled] = useState(true);
   const hasHydratedRef = useRef(false);
   const temperatureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const temperatureSnapshotRef = useRef<{
+    previousConfirmedValue: AccommodationEditableValue;
+    previousDraftValue: AccommodationEditableValue;
+  } | null>(null);
+  const smokeDensityDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const smokeDensitySnapshotRef = useRef<{
     previousConfirmedValue: AccommodationEditableValue;
     previousDraftValue: AccommodationEditableValue;
   } | null>(null);
@@ -875,9 +906,54 @@ export default function AccommodationRoom() {
       ...(metricsState.temperatureValue !== null
         ? { temperatureValue: metricsState.temperatureValue }
         : {}),
-      ...(metricsState.smokeDetected !== null ? { smokeDetected: metricsState.smokeDetected } : {}),
+      ...(metricsState.smokeDensityValue !== null
+        ? { smokeDensityValue: metricsState.smokeDensityValue }
+        : {}),
     };
   }, [metricsState]);
+
+  // Auto pump activation + cooldown (mobile-only, no backend):
+  //  • When the confirmed temperature / smoke density crosses the fire threshold
+  //    AND FROM PLC bit 13 (Remote Mode) is active, drive TO_PLC W2 (Pump
+  //    Activation) so the PLC starts the pump — cleared once things fall back to
+  //    normal. Mirrors the manual W2 command in src/app/stations/pump-room.tsx.
+  //  • While FROM PLC reports a running pump (bit 0 / bit 1), nudge temperature
+  //    and smoke density back down until they reach normal.
+  const confirmedTemperatureC = parseAccommodationTemperature(confirmedForm.temperatureValue);
+  const confirmedSmokeDensityPpm = parseAccommodationSmokeDensity(confirmedForm.smokeDensityValue);
+  const smokeDensityCounterId =
+    CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
+
+  useAutoPumpActivation({
+    enabled: status === 'connected',
+    fire: {
+      temperatureC: confirmedTemperatureC,
+      densityEnabled: smokeDensityCounterId !== null,
+      densityPpm: confirmedSmokeDensityPpm,
+    },
+    metricsPayload: metricsTopic.payload,
+    publishTopic,
+  });
+
+  const cooldownTargets: CooldownTarget[] = [
+    {
+      counterId: CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.temperature,
+      currentValue: confirmedTemperatureC,
+      floor: AUTO_PUMP_TEMP_OFF_C - 1,
+    },
+    {
+      counterId: smokeDensityCounterId,
+      currentValue: confirmedSmokeDensityPpm,
+      floor: Math.max(0, AUTO_PUMP_DENSITY_OFF_PPM - 1),
+    },
+  ];
+
+  useAutoCooldown({
+    enabled: status === 'connected' && isCooldownSimEnabled,
+    metricsPayload: metricsTopic.payload,
+    targets: cooldownTargets,
+    publishTopic,
+  });
 
   const showCommandError = useCallback((message: string) => {
     setLastCommandError(message);
@@ -912,27 +988,13 @@ export default function AccommodationRoom() {
         return;
       }
 
-      if (field === 'smokeDetected' && statusRef.current === 'connected') {
-        const optimisticSmokeValue = command.snapshot.expectedMetricValue >= 0.5;
-
-        setDraftForm((current) => ({
-          ...current,
-          smokeDetected: optimisticSmokeValue,
-        }));
-        setConfirmedForm((current) => ({
-          ...current,
-          smokeDetected: optimisticSmokeValue,
-        }));
-        return;
-      }
-
       setDraftForm((current) => ({
         ...current,
-        smokeDetected: rollbackDraftValue as boolean,
+        smokeDensityValue: rollbackDraftValue as string,
       }));
       setConfirmedForm((current) => ({
         ...current,
-        smokeDetected: rollbackConfirmedValue as boolean,
+        smokeDensityValue: rollbackConfirmedValue as string,
       }));
     },
     []
@@ -945,6 +1007,15 @@ export default function AccommodationRoom() {
 
     clearTimeout(temperatureDebounceRef.current);
     temperatureDebounceRef.current = null;
+  }, []);
+
+  const clearSmokeDensityDebounce = useCallback(() => {
+    if (!smokeDensityDebounceRef.current) {
+      return;
+    }
+
+    clearTimeout(smokeDensityDebounceRef.current);
+    smokeDensityDebounceRef.current = null;
   }, []);
 
   const alarmState = useMemo(
@@ -1002,7 +1073,13 @@ export default function AccommodationRoom() {
       const counterId =
         field === 'temperatureValue'
           ? CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.temperature
-          : CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeStatus;
+          : CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
+
+      // Smoke density is UI-only until its counter id is wired; callers keep it
+      // local in that case, so reaching here with a null id is unexpected.
+      if (counterId === null) {
+        return;
+      }
 
       if (status !== 'connected') {
         rollbackCounterCommand({
@@ -1152,11 +1229,12 @@ export default function AccommodationRoom() {
     return () => {
       isMounted = false;
       clearTemperatureDebounce();
+      clearSmokeDensityDebounce();
       if (commandErrorTimeoutRef.current) {
         clearTimeout(commandErrorTimeoutRef.current);
       }
     };
-  }, [clearTemperatureDebounce]);
+  }, [clearSmokeDensityDebounce, clearTemperatureDebounce]);
 
 
   useEffect(() => {
@@ -1179,7 +1257,9 @@ export default function AccommodationRoom() {
     }
 
     clearTemperatureDebounce();
+    clearSmokeDensityDebounce();
     temperatureSnapshotRef.current = null;
+    smokeDensitySnapshotRef.current = null;
     const clearPendingTimer = setTimeout(() => {
       resolveAllCommands({
         onResolve: (command) => {
@@ -1193,7 +1273,13 @@ export default function AccommodationRoom() {
     }, 0);
 
     return () => clearTimeout(clearPendingTimer);
-  }, [clearTemperatureDebounce, resolveAllCommands, rollbackCounterCommand, status]);
+  }, [
+    clearSmokeDensityDebounce,
+    clearTemperatureDebounce,
+    resolveAllCommands,
+    rollbackCounterCommand,
+    status,
+  ]);
 
   useEffect(() => {
     if (!metricsState) {
@@ -1202,8 +1288,8 @@ export default function AccommodationRoom() {
 
     const nextTemperatureMetricValue =
       metricsState.temperatureNumber === null ? null : Math.round(metricsState.temperatureNumber);
-    const nextSmokeMetricValue =
-      metricsState.smokeDetected === null ? null : metricsState.smokeDetected ? 1 : 0;
+    const nextSmokeDensityMetricValue =
+      metricsState.smokeDensityNumber === null ? null : Math.round(metricsState.smokeDensityNumber);
     const latestPendingCommands = Object.values(pendingCommandMap).filter(isCounterCommand);
 
     const isFreshGatewayResponse = (command: PendingCommandState<CounterCommandSnapshot>) =>
@@ -1225,13 +1311,13 @@ export default function AccommodationRoom() {
       }
 
       return (
-        nextSmokeMetricValue !== null &&
-        command.snapshot.expectedMetricValue === nextSmokeMetricValue
+        nextSmokeDensityMetricValue !== null &&
+        command.snapshot.expectedMetricValue === nextSmokeDensityMetricValue
       );
     });
 
     const processMetricsTimer = setTimeout(() => {
-      if (metricsState.temperatureValue !== null || metricsState.smokeDetected !== null) {
+      if (metricsState.temperatureValue !== null || metricsState.smokeDensityValue !== null) {
         setConfirmedForm((current) => {
           const next = { ...current };
 
@@ -1239,8 +1325,8 @@ export default function AccommodationRoom() {
             next.temperatureValue = metricsState.temperatureValue;
           }
 
-          if (metricsState.smokeDetected !== null) {
-            next.smokeDetected = metricsState.smokeDetected;
+          if (metricsState.smokeDensityValue !== null) {
+            next.smokeDensityValue = metricsState.smokeDensityValue;
           }
 
           return next;
@@ -1260,11 +1346,13 @@ export default function AccommodationRoom() {
           }
 
           if (
-            metricsState.smokeDetected !== null &&
-            (!isCommandPending(getCounterCommandId('smokeDetected')) ||
-              ackedCounterCommands.some((command) => command.snapshot.field === 'smokeDetected'))
+            metricsState.smokeDensityValue !== null &&
+            (!isCommandPending(getCounterCommandId('smokeDensityValue')) ||
+              ackedCounterCommands.some(
+                (command) => command.snapshot.field === 'smokeDensityValue'
+              ))
           ) {
-            next.smokeDetected = metricsState.smokeDetected;
+            next.smokeDensityValue = metricsState.smokeDensityValue;
           }
 
           return next;
@@ -1328,28 +1416,6 @@ export default function AccommodationRoom() {
     setLastCommandError(null);
   }, [metricsReceivedAt, pendingCommandMap, resolveCommand]);
 
-  const handleSmokeDetectedChange = useCallback(
-    (nextValue: boolean) => {
-      const snapshot = {
-        previousConfirmedValue: getAccommodationFieldValue(confirmedForm, 'smokeDetected'),
-        previousDraftValue: getAccommodationFieldValue(draftForm, 'smokeDetected'),
-      };
-
-      setDraftForm((current) => ({
-        ...current,
-        smokeDetected: nextValue,
-      }));
-
-      void sendSetValueCommand(
-        'smokeDetected',
-        nextValue ? 1 : 0,
-        `Smoke Status ${nextValue ? 'Detected' : 'Clear'}`,
-        snapshot
-      );
-    },
-    [confirmedForm, draftForm, sendSetValueCommand]
-  );
-
   const handleTemperatureChange = useCallback(
     (nextValue: string) => {
       const nextTemperature = parseAccommodationTemperature(nextValue);
@@ -1385,10 +1451,57 @@ export default function AccommodationRoom() {
     [clearTemperatureDebounce, confirmedForm, draftForm, sendSetValueCommand]
   );
 
+  const handleSmokeDensityChange = useCallback(
+    (nextValue: string) => {
+      const nextDensity = parseAccommodationSmokeDensity(nextValue);
+      const densityCounterId =
+        CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
+
+      if (!smokeDensitySnapshotRef.current) {
+        smokeDensitySnapshotRef.current = {
+          previousConfirmedValue: getAccommodationFieldValue(confirmedForm, 'smokeDensityValue'),
+          previousDraftValue: getAccommodationFieldValue(draftForm, 'smokeDensityValue'),
+        };
+      }
+
+      setDraftForm((current) => ({
+        ...current,
+        smokeDensityValue: formatAccommodationSmokeDensity(nextDensity),
+      }));
+
+      clearSmokeDensityDebounce();
+      smokeDensityDebounceRef.current = setTimeout(() => {
+        const snapshot = smokeDensitySnapshotRef.current ?? {
+          previousConfirmedValue: getAccommodationFieldValue(confirmedForm, 'smokeDensityValue'),
+          previousDraftValue: getAccommodationFieldValue(draftForm, 'smokeDensityValue'),
+        };
+        smokeDensitySnapshotRef.current = null;
+
+        // No counter id wired yet (or offline) → keep the density value local.
+        if (densityCounterId === null || status !== 'connected') {
+          setConfirmedForm((current) => ({
+            ...current,
+            smokeDensityValue: formatAccommodationSmokeDensity(nextDensity),
+          }));
+          return;
+        }
+
+        void sendSetValueCommand(
+          'smokeDensityValue',
+          nextDensity,
+          `Smoke Density ${formatAccommodationSmokeDensity(nextDensity)}`,
+          snapshot
+        );
+      }, COMMAND_DEBOUNCE_MS);
+    },
+    [clearSmokeDensityDebounce, confirmedForm, draftForm, sendSetValueCommand, status]
+  );
+
   const pendingTemperatureCommand = pendingCommandMap[getCounterCommandId('temperatureValue')] ?? null;
-  const pendingSmokeCommand = pendingCommandMap[getCounterCommandId('smokeDetected')] ?? null;
+  const pendingSmokeDensityCommand =
+    pendingCommandMap[getCounterCommandId('smokeDensityValue')] ?? null;
   const isTemperaturePending = pendingTemperatureCommand !== null;
-  const isSmokePending = pendingSmokeCommand !== null;
+  const isSmokeDensityPending = pendingSmokeDensityCommand !== null;
   const isAlarmPending = pendingAlarmEntries.length > 0;
   const isAlarmCommandLocked = useCallback(
     (command: CarloGavazziAlarmCommandName) => !!pendingCommandMap[getAlarmCommandId(command)],
@@ -1416,7 +1529,8 @@ export default function AccommodationRoom() {
 
     return () => clearInterval(intervalId);
   }, [isAlarmPending]);
-  const isAnyPending = isTemperaturePending || isSmokePending || isAlarmPending;
+  const isAnyPending =
+    isTemperaturePending || isSmokeDensityPending || isAlarmPending;
   const lastMetricsAt = metricsReceivedAt;
   const lastAlarmMetricsAt = alarmState.lastSignalAt ?? lastMetricsAt;
   const latestAlarmRoundtripMs =
@@ -1457,28 +1571,6 @@ export default function AccommodationRoom() {
 
     return '00:00:00';
   }, [isAnyPending, lastCommandError, lastMetricsAt, status]);
-
-  const smokeHint = useMemo(() => {
-    if (lastCommandError && isSmokePending) {
-      return lastCommandError;
-    }
-
-    if (isSmokePending) {
-      return `Request ${
-        pendingSmokeCommand?.label ?? 'Smoke Status'
-      }.`;
-    }
-
-    if (status !== 'connected') {
-      return 'Disconnected';
-    }
-
-    if (lastMetricsAt) {
-      return `Confirmed state from metrics at ${formatEventTime(lastMetricsAt)}.`;
-    }
-
-    return 'Smoke status follows the confirmed value returned by the gateway metrics.';
-  }, [isSmokePending, lastCommandError, lastMetricsAt, pendingSmokeCommand, status]);
 
   const temperatureHint = useMemo(() => {
     if (lastCommandError && isTemperaturePending) {
@@ -1563,17 +1655,18 @@ export default function AccommodationRoom() {
           syncLabel={heroSyncLabel}
           syncHint={heroSyncHint}
           isPending={isAnyPending}
+          isCooldownSimEnabled={isCooldownSimEnabled}
+          onToggleCooldownSim={() => setIsCooldownSimEnabled((current) => !current)}
         />
         <AccommodationSourceSection
           confirmedForm={confirmedForm}
           draftForm={draftForm}
           heatingState={zoneHeatingState}
-          smokeHint={smokeHint}
           temperatureHint={temperatureHint}
-          isSmokePending={isSmokePending}
           isTemperaturePending={isTemperaturePending}
-          onSmokeChange={handleSmokeDetectedChange}
+          isSmokeDensityPending={isSmokeDensityPending}
           onTemperatureChange={handleTemperatureChange}
+          onSmokeDensityChange={handleSmokeDensityChange}
         />
         <AccommodationAlarmSection
           alarmStatusLabel={alarmState.alarmStatusLabel}

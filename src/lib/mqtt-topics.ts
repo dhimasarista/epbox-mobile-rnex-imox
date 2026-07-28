@@ -1,4 +1,7 @@
-import { formatAccommodationTemperature } from '@/lib/accommodation-room-demo';
+import {
+  formatAccommodationSmokeDensity,
+  formatAccommodationTemperature,
+} from '@/lib/accommodation-room-demo';
 import { joinWords, splitWords } from '@/lib/bit-packed-word';
 
 export type MqttTopicDirection = 'publish' | 'subscribe' | 'duplex';
@@ -156,6 +159,8 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
     counterIds: {
       smokeStatus: 3549,
       temperature: 3585,
+      // Smoke density sensor (ppm, range 0–15) — a counter just like temperature.
+      smokeDensity: 7280 as number | null,
     },
     alarm: {
       deviceId: 3667,
@@ -599,22 +604,25 @@ export function getCarloGavazziCounterBooleanValue(
 }
 
 export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPayload) {
-  const smokeDetected = getCarloGavazziCounterBooleanValue(
-    payload,
-    CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeStatus
-  );
   const temperatureNumber = getCarloGavazziCounterNumericValue(
     payload,
     CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.temperature
   );
+  const smokeDensityId = CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
+  const smokeDensityNumber =
+    smokeDensityId === null ? null : getCarloGavazziCounterNumericValue(payload, smokeDensityId);
 
   return {
-    smokeDetected,
     temperatureNumber,
     temperatureValue:
       temperatureNumber === null
         ? null
         : formatAccommodationTemperature(Math.round(temperatureNumber)),
+    smokeDensityNumber,
+    smokeDensityValue:
+      smokeDensityNumber === null
+        ? null
+        : formatAccommodationSmokeDensity(Math.round(smokeDensityNumber)),
   };
 }
 

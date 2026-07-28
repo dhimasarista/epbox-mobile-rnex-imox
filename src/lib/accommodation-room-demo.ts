@@ -5,18 +5,22 @@ const accommodationRoomStorage = createKeyValueStorage(ACCOMMODATION_ROOM_STORAG
 
 export type AccommodationRoomInputKey =
   | 'triggerEnable'
-  | 'smokeDetected'
   | 'temperatureValue'
   | 'temperatureHighLimit'
   | 'manualOverride';
 
 export type AccommodationRoomInputs = {
   triggerEnable: boolean;
-  smokeDetected: boolean;
   temperatureValue: string;
+  smokeDensityValue: string;
   temperatureHighLimit: boolean;
   manualOverride: boolean;
 };
+
+// Smoke density is a counter signal just like temperature (0..15 ppm), so it uses
+// the exact same parse/format/clamp rules — only the range differs.
+export const SMOKE_DENSITY_MIN_PPM = 0;
+export const SMOKE_DENSITY_MAX_PPM = 15;
 
 export type AccommodationRoomDashboardData = {
   simulationActive: string;
@@ -27,8 +31,8 @@ export type AccommodationRoomDashboardData = {
 
 export const DEFAULT_ACCOMMODATION_ROOM_INPUTS: AccommodationRoomInputs = {
   triggerEnable: true,
-  smokeDetected: false,
   temperatureValue: '34 C',
+  smokeDensityValue: '0 ppm',
   temperatureHighLimit: false,
   manualOverride: false,
 };
@@ -67,15 +71,32 @@ export function formatAccommodationTemperature(value: number) {
   return `${clampAccommodationTemperature(value)} C`;
 }
 
+export function clampAccommodationSmokeDensity(value: number) {
+  if (!Number.isFinite(value)) {
+    return SMOKE_DENSITY_MIN_PPM;
+  }
+
+  return Math.min(Math.max(Math.round(value), SMOKE_DENSITY_MIN_PPM), SMOKE_DENSITY_MAX_PPM);
+}
+
+export function parseAccommodationSmokeDensity(value: string) {
+  const leadingNumberMatch = value.trim().match(/^\d+/);
+  const parsedValue = leadingNumberMatch ? Number.parseInt(leadingNumberMatch[0], 10) : Number.NaN;
+
+  return clampAccommodationSmokeDensity(parsedValue);
+}
+
+export function formatAccommodationSmokeDensity(value: number) {
+  return `${clampAccommodationSmokeDensity(value)} ppm`;
+}
+
 export function buildAccommodationRoomDashboard(
   inputs: AccommodationRoomInputs
 ): AccommodationRoomDashboardData {
   const simulationEnabled = inputs.triggerEnable;
-  const fireAlarmActive =
-    simulationEnabled && (inputs.smokeDetected || inputs.manualOverride);
+  const fireAlarmActive = simulationEnabled && inputs.manualOverride;
   const pumpInterlockActive =
-    simulationEnabled &&
-    (inputs.smokeDetected || inputs.temperatureHighLimit || inputs.manualOverride);
+    simulationEnabled && (inputs.temperatureHighLimit || inputs.manualOverride);
 
   return {
     simulationActive: simulationEnabled ? 'Active' : 'Standby',
@@ -97,9 +118,10 @@ export async function getStoredAccommodationRoomInputs() {
 
     return {
       triggerEnable: parsed.triggerEnable ?? DEFAULT_ACCOMMODATION_ROOM_INPUTS.triggerEnable,
-      smokeDetected: parsed.smokeDetected ?? DEFAULT_ACCOMMODATION_ROOM_INPUTS.smokeDetected,
       temperatureValue:
         parsed.temperatureValue ?? DEFAULT_ACCOMMODATION_ROOM_INPUTS.temperatureValue,
+      smokeDensityValue:
+        parsed.smokeDensityValue ?? DEFAULT_ACCOMMODATION_ROOM_INPUTS.smokeDensityValue,
       temperatureHighLimit:
         parsed.temperatureHighLimit ?? DEFAULT_ACCOMMODATION_ROOM_INPUTS.temperatureHighLimit,
       manualOverride: parsed.manualOverride ?? DEFAULT_ACCOMMODATION_ROOM_INPUTS.manualOverride,
