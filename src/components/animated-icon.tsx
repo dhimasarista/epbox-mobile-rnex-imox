@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dimensions, StyleSheet, View } from 'react-native';
 import Animated, { Easing, Keyframe } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -7,8 +7,19 @@ import { scheduleOnRN } from 'react-native-worklets';
 const INITIAL_SCALE_FACTOR = Dimensions.get('screen').height / 90;
 const DURATION = 600;
 
+// The launch splash must play exactly once per app process. It is a full-screen
+// blue overlay, so if this component ever re-mounts (e.g. a provider subtree
+// remounts when connectivity/state changes) a fresh `useState(true)` would flash
+// the blue screen again. This module-level flag survives remounts and keeps it
+// hidden after the first play.
+let hasSplashPlayed = false;
+
 export function AnimatedSplashOverlay() {
-  const [visible, setVisible] = useState(true);
+  const [visible, setVisible] = useState(!hasSplashPlayed);
+
+  useEffect(() => {
+    hasSplashPlayed = true;
+  }, []);
 
   if (!visible) return null;
 
