@@ -5,6 +5,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useAutoCooldown, type CooldownTarget } from '@/hooks/use-auto-cooldown';
+import {
+  AUTO_PUMP_DENSITY_OFF_PPM,
+  AUTO_PUMP_DENSITY_ON_PPM,
+  AUTO_PUMP_TEMP_OFF_C,
+  useAutoPumpActivation,
+} from '@/hooks/use-auto-pump-activation';
+import {
+  usePendingCommand,
+  type PendingCommandState
+} from '@/hooks/use-pending-command';
 import {
   DEFAULT_ACCOMMODATION_ROOM_INPUTS,
   formatAccommodationSmokeDensity,
@@ -17,18 +28,6 @@ import {
   SMOKE_DENSITY_MIN_PPM,
   type AccommodationRoomInputs,
 } from '@/lib/accommodation-room-demo';
-import { useAutoCooldown, type CooldownTarget } from '@/hooks/use-auto-cooldown';
-import {
-  AUTO_PUMP_DENSITY_OFF_PPM,
-  AUTO_PUMP_DENSITY_ON_PPM,
-  AUTO_PUMP_TEMP_OFF_C,
-  useAutoPumpActivation,
-} from '@/hooks/use-auto-pump-activation';
-import {
-  DEFAULT_PENDING_COMMAND_TIMEOUT_MS,
-  usePendingCommand,
-  type PendingCommandState,
-} from '@/hooks/use-pending-command';
 import {
   ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS,
   buildCarloGavazziAlarmCommand,
@@ -248,7 +247,7 @@ function AccommodationRoomHero({
         {/* Sync badge doubles as the cooldown-simulation switch: tap to stop the
             auto temperature / smoke-density decrease while a pump is running. */}
         <TouchableOpacity
-          style={[styles.heroBadge, !isCooldownSimEnabled && { opacity: 0.55 }]}
+          style={[styles.heroBadge, !isCooldownSimEnabled && { opacity: 0.80 }]}
           onPress={onToggleCooldownSim}
           activeOpacity={0.8}
           accessibilityRole="switch"
@@ -260,7 +259,7 @@ function AccommodationRoomHero({
             color={AppColors.primary}
           />
           <Text style={styles.heroBadgeText}>
-            {isCooldownSimEnabled ? syncLabel : `${syncLabel} · Sim Off`}
+            {isCooldownSimEnabled ? syncLabel : `Off`}
           </Text>
         </TouchableOpacity>
         <View style={styles.liveChip}>
