@@ -1,200 +1,188 @@
 # AGENTS.md
 
-Panduan ini berlaku untuk seluruh repo `epbox-mobile-rnex-imox`.
-Ikuti instruksi ini sebelum membuat perubahan apa pun.
+Panduan untuk OpenCode di repo `epbox-mobile-rnex-imox`.
+Setiap baris adalah sesuatu yang agent kemungkinan akan lewatkan tanpa bantuan.
 
-## Ringkasan Proyek
+---
 
-- Aplikasi mobile Expo SDK 56, React Native, TypeScript, Expo Router.
-- Entry app menggunakan `expo-router/entry`.
-- Source utama ada di `src/`.
-- Screen station utama ada di `src/app/stations/`.
-- MQTT gateway, topic, payload, dan packing word berada di:
-  - `src/providers/mqtt-provider.tsx`
-  - `src/lib/mqtt-topics.ts`
-  - `src/lib/mqtt-settings.ts`
-  - `src/lib/mqtt-cache.ts`
+## Commands
 
-## Aturan Wajib Sebelum Edit
+| Perintah | Kegunaan |
+|---|---|
+| `npm start` | Expo dev server |
+| `npm run android` / `ios` / `web` | Build + run per platform |
+| `npm run lint` | ESLint (`expo lint`) |
+| `npx tsc --noEmit` | **Wajib setelah setiap perubahan kode** — harus exit 0 |
+| `npx expo install <pkg>` | Install package versi SDK 56 |
 
-1. Baca dokumentasi versi Expo yang tepat sebelum menulis kode:
-   - https://docs.expo.dev/versions/v56.0.0/
-2. Pahami file yang akan disentuh sebelum patch.
-3. Gunakan `rg` untuk mencari file atau referensi.
-4. Edit hanya file yang relevan dengan request.
-5. Jangan revert perubahan user atau perubahan lain yang tidak terkait.
-6. Jangan menyentuh kredensial broker, secret, password, token, atau pengaturan koneksi kecuali user eksplisit meminta dan scope-nya jelas.
+## TypeCheck Wajib
 
-## Validasi Wajib
+Setelah edit APAPUN, jalankan `npx tsc --noEmit`. Perubahan belum selesai sampai exit 0.
 
-Setelah setiap perubahan kode, jalankan:
+## Path Alias
 
-```bash
-npx tsc --noEmit
+`@/*` → `src/*`, `@/assets/*` → `assets/*`. Selalu pakai `@/` di import.
+
+## React Compiler
+
+`experiments.reactCompiler: true` di app.json — React optimasi memoization otomatis. Tetap pakai `useCallback`/`useMemo` eksplisit untuk referensi yang jadi dep array atau di-pass sebagai props.
+
+## Provider Chain
+
+```
+AuthProvider
+  └── loading → SplashScreen
+  └── unauthenticated → LoginScreen
+  └── authenticated →
+        MqttProvider
+          └── AppTabs (Expo Router <Tabs>)
+                ├── Home (index.tsx)
+                ├── Explore (explore.tsx)
+                ├── Status (status.tsx)
+                ├── Settings (settings.tsx)
+                └── Stations (pump-room, accommodation-room)
 ```
 
-Perubahan belum selesai sampai command tersebut exit `0`.
+## Layout Root
 
-Jika mengubah lint-sensitive code, boleh tambahkan:
+`src/app/_layout.tsx` adalah satu-satunya layout. Auth → MQTT → Tabs. Tidak ada sub-layout.
 
-```bash
-npx expo lint
-```
+## MQTT Safety (JANGAN DISENTUH)
 
-Tetapi `npx tsc --noEmit` tetap wajib.
+- Jangan baca/tampilkan/ubah broker credentials (host, port, username, password, clientId, protocol, TLS, reconnect).
+- Jangan hardcode topic baru jika mapping sudah ada di `src/lib/mqtt-topics.ts`.
+- Jangan buat retry publish otomatis.
+- Jangan ubah settings koneksi di `src/providers/mqtt-provider.tsx` tanpa request eksplisit.
 
-## Cara Kerja Saat Mengerjakan Task
+## MQTT Architecture
 
-1. Baca request terbaru user dan jadikan itu sumber kebenaran.
-2. Baca file terkait sebelum menyimpulkan solusi.
-3. Cari referensi lama dengan `rg` sebelum mengganti nama key, label, topic, atau mapping bit.
-4. Buat patch kecil dan terarah.
-5. Setelah patch, cari ulang referensi yang seharusnya hilang.
-6. Jalankan `npx tsc --noEmit`.
-7. Laporkan ringkas:
-   - file yang diubah,
-   - perilaku yang berubah,
-   - hasil verifikasi.
+- 3 subscribe topic di-merge ke satu store `gatewayMetrics`:
+  - `.../metrics` (FROM PLC 6563, TO PLC 7193)
+  - `.../pressure-transmitter` (PT1 6983, PT2 7019)
+  - `.../acc-room/metrics` (smoke 3549, temp 3585, alarm 3667, zone 4147)
+- Merge via `mergeCarloGavazziMetricsPayload()` — union by device id, incremental.
+- Latency measurement via `appLatencyPing` loopback topic (self-publish + subscribe).
+- Gateway stale: jika `gatewayMetrics` tidak terima >60s saat connected → `isGatewayStale = true`.
+- Cold start: `mqtt-cache.ts` persist last metrics ke file system / localStorage.
+- `CarloGavazziForceCommandPayload` (ForceOn/ForceOff) ada untuk override output automation.
 
-## Struktur Source Penting
+## TO PLC (Device 7193) — Packed uint64
 
-- `src/app/`
-  - Route dan screen Expo Router.
-- `src/app/stations/accommodation-room.tsx`
-  - UI dan command station accommodation room.
-- `src/app/stations/pump-room.tsx`
-  - UI FROM PLC dan TO PLC pump room.
-- `src/hooks/`
-  - Hook reusable, termasuk pending command dan auto behavior.
-- `src/lib/`
-  - Helper domain, MQTT topic, bit packing, storage, demo defaults.
-- `src/providers/`
-  - Provider app, termasuk MQTT dan auth.
-- `src/styles/`
-  - Token, primitive, dan style screen.
+4 words, W[0] = least significant:
 
-## MQTT dan Gateway Rules
+| Word | Isi |
+|---|---|
+| W[0] | PT-001 pressure set-point counter |
+| W[1] | PT-002 pressure set-point counter |
+| W[2] | Pump Activation (1 = fire) |
+| W[3] | Spare (always 0) |
 
-- Jangan baca, tampilkan, atau ubah broker credentials.
-- Jangan ubah host, port, username, password, client id, protocol, reconnect setting, atau TLS setting tanpa request eksplisit.
-- Jangan hardcode topic baru jika topic/payload map sudah ada di `src/lib/mqtt-topics.ts`.
-- Gunakan helper packing/unpacking yang sudah ada.
-- Jangan membuat retry publish otomatis kecuali user eksplisit meminta.
-- Untuk publish user-triggered, pakai pola pending command yang konsisten:
-  1. user press,
-  2. UI masuk pending dan control terkait disabled,
-  3. snapshot state sebelum send,
-  4. tunggu response gateway,
-  5. success commit jika response cocok,
-  6. timeout 5000 ms rollback jika tidak ada response,
-  7. timeout/success harus saling membatalkan.
-- Gunakan `src/hooks/use-pending-command.ts` untuk flow pending, jangan membuat pending timeout ad-hoc baru.
-- Setiap control harus independen; timeout satu control tidak boleh membersihkan pending control lain.
+`packToPlcCommand()` / `unpackToPlcCommand()` di `mqtt-topics.ts`.
 
-## Pump Room Notes
+## Pressure Units
 
-File utama: `src/app/stations/pump-room.tsx`.
+1 bar = 1 counter word. UI value `3` → word `3`. Bukan `10` atau `0.1`.
 
-### FROM PLC / DO
+## Pending Command Pattern (WAJIB)
 
-DO adalah 1 word uint16 dari PLC, bit 0 adalah LSB. App hanya menerima dan
-menampilkan DO ketika MQTT connected. Saat simulation/offline, channel boleh
-di-toggle lokal untuk validasi packing bit.
+Untuk SEMUA user-triggered command:
+1. User press → snapshot state sebelum send
+2. UI masuk pending, control terkunci
+3. `usePendingCommand<TSnapshot>()` dari `src/hooks/use-pending-command.ts`
+4. Timeout 5 detik → silent rollback ke snapshot
+5. Success → clear pending saat metrics berikutnya confirm
+6. Timeout & success saling membatalkan
+7. Setiap control independen
 
-Mapping DO resmi:
+Jangan buat pending timeout ad-hoc.
 
-| bitIndex | key                  | label                    |
-| ---: | --- | --- |
-| 0  | `pumpARunning`         | `Pump A Running`         |
-| 1  | `pumpBRunning`         | `Pump B Running`         |
-| 2  | `sv1Opened`            | `SV1 Opened`             |
-| 3  | `sv2Opened`            | `SV2 Opened`             |
-| 4  | `flowSwitch`           | `Flow Switch`            |
-| 5  | `dischargeActive`      | `Discharge Active`       |
-| 6  | `localZoneActivation`  | `Local Zone Activation`  |
-| 7  | `remoteZoneActivation` | `Remote Zone Activation` |
-| 8  | `fgsConfFire`          | `FGS Confirmed Fire`     |
-| 9  | `levelTankHigh`        | `Tank Level High`        |
-| 10 | `levelTankLow`         | `Tank Level Low`         |
-| 11 | `pumpCRunning`         | `Pump C Running`         |
-| 12 | `localMode`            | `Mode Local`             |
-| 13 | `remoteMode`           | `Mode Remote`            |
-| 14 | `pumpATripped`         | `Pump A Tripped`         |
-| 15 | `pumpBTripped`         | `Pump B Tripped`         |
+## Auto Hooks (BUKAN pending-command-based)
 
-Jangan hidupkan kembali key lama `sv1Closed` atau `sv2Closed`.
+- `useAutoPumpActivation`: watch temperature + smoke density → publish Pump Activation (W2=1/0) via TO PLC. Gate: FROM PLC bit 13 (Remote Mode) harus aktif.
+- `useAutoCooldown`: selama pump running (FROM PLC bit 0 atau 1), publish SetValue decrement ke counter temperature/smoke tiap 0.5–1s.
+- Keduanya langsung publish, TIDAK pakai pending command.
 
-Bit 0, 1, dan 13 dipakai oleh hook auto-pump/cooldown. Jangan ubah mapping bit
-tersebut tanpa instruksi eksplisit.
+## FROM PLC DO Bit Map (Pump Room, Device 6563)
 
-### TO PLC
+| Bit | Key | Dipakai auto-hooks? |
+|---|---|---|
+| 0 | pumpARunning | Ya (cooldown) |
+| 1 | pumpBRunning | Ya (cooldown) |
+| 2 | sv1Opened | |
+| 3 | sv2Opened | |
+| 4 | flowSwitch | |
+| 5 | dischargeActive | |
+| 6 | localZoneActivation | |
+| 7 | remoteZoneActivation | |
+| 8 | fgsConfFire | |
+| 9 | levelTankHigh | |
+| 10 | levelTankLow | |
+| 11 | pumpCRunning | |
+| 12 | localMode | |
+| 13 | remoteMode | Ya (auto-pump gate) |
+| 14 | pumpATripped | |
+| 15 | pumpBTripped | |
 
-- Pressure transmitter memakai input bar 0 sampai 16.
-- Nilai UI pressure adalah 1:1 ke word/counter gateway: `1 bar` dikirim sebagai `1`, bukan `10` atau `0.1`.
-- Default pressure pump adalah `3 bar` jika tidak ada data tersimpan/gateway.
-- Pressure pump harus mengikuti realtime MQTT/gateway ketika connected, kecuali field sedang pending command.
-- Remote control memakai W2:
-  - `Remote Activation` mengirim `1/true`.
-  - Setelah feedback sukses dan W2 menjadi `1`, UI menahan value `1` dan button berikutnya menjadi `Remote Reset`.
-  - `Remote Reset` mengirim `0/false`.
-- Jangan mengirim reset otomatis untuk W2 kecuali user meminta.
+Jangan hidupkan kembali key `sv1Closed` / `sv2Closed`.
 
-## Accommodation Room Notes
+## Fire-Fighting Room
 
-File utama: `src/app/stations/accommodation-room.tsx`.
+**Screen belum ada** — hanya ada docs di `docs/` dan bit map di `docs/fire-fighting-room-mqtt.md`.
+Yang sudah di kode:
+- FROM PLC (6563) "Adjustable value": 12 DI (bit 0–11) + 12 DO (bit 12–23)
+- TO PLC (7193) dipakai oleh pump room dan auto hooks (shared device)
+- `buildCarloGavazziForceCommand()` ada untuk DO force override
 
-- Alarm command button harus tetap mengikuti pola pending command reusable.
-- Jangan membuat countdown atau ack logic baru berbasis sinyal yang tidak cocok.
-- Alarm ON/OFF UI harus mengikuti flow visual yang diminta user:
-  - row OFF tetap horizontal,
-  - alarm ON merah,
-  - siren OFF gray dan ON kuning.
-- Value controls seperti temperature/smoke harus rollback ke snapshot ketika timeout,
-  dan sync lagi dari current MQTT/gateway ketika connected.
+## Accommodation Room
 
-## UI dan Style Rules
+File: `src/app/stations/accommodation-room.tsx`.
 
-- Ikuti style system yang sudah ada di `src/styles/`.
-- Gunakan token `AppColors`, `AppSpacing`, `AppRadii`, dan style screen yang sudah tersedia.
-- Jangan membuat style besar baru jika primitive/style existing cukup.
-- Untuk icon, gunakan library yang sudah ada seperti `@expo/vector-icons`.
-- UI control harus stabil ukurannya saat pending, disabled, atau label berubah.
-- Jangan membuat button melebar karena text status/pending.
-- Jangan ubah flow awal user kecuali request terbaru eksplisit meminta.
+- Device ID: smoke 3549, temp 3585, alarm 3667, zone temp 4147, smoke density 7280 (nullable).
+- Alarm command: `Acknowledgement`, `Reset`, `TestAlarmOn`, `TestAlarmOff`, `ResetOn`, `ResetOff`.
+- Counter command: `SetValue` (temperature slider debounce 250ms, smoke toggle langsung).
+- Value controls rollback ke snapshot saat timeout, sync dari MQTT ketika connected.
+- Zone temperature via modal: heating control, set point, status.
+- Threshold suhu: normal <40°C, warning 40–54°C, danger ≥55°C.
 
-## TypeScript dan Kode
+## Storage Keys
 
-- Pertahankan type inference dari data `as const` jika sudah dipakai.
-- Untuk mapping bit, pastikan union type berasal dari source mapping yang sama atau selalu sinkron.
-- Jangan pakai `any` jika tipe domain bisa dibuat jelas.
-- Gunakan helper domain untuk parsing/formatting/packing.
-- Bersihkan timer di cleanup effect.
-- Hindari state duplikat kecuali memang diperlukan untuk optimistic UI dan rollback.
+| Key | Isi |
+|---|---|
+| `epbox.connection.settings` | MQTT broker config |
+| `epbox.auth.session` | User session |
+| `epbox.accommodation-room.demo.values` | Accommodation room input state |
+| `epbox.pump-room.demo.values` | Pump room sensor values |
+| `epbox.mqtt.metrics-cache` | Web localStorage cache metrics |
+| `epbox-mqtt-metrics-cache.json` | Native file cache metrics |
 
-## Git dan File Safety
+## No Environment Variables
 
-- Worktree bisa dirty. Jangan pakai `git reset --hard`.
+Semua konfigurasi via Settings screen runtime. Tidak ada `.env`.
+
+## Style System
+
+- `src/styles/tokens.ts`: `AppColors`, `AppSpacing`, `AppRadii`
+- `src/styles/primitives.ts`: base layout & text styles
+- `src/styles/screens/`: stylesheet per layar
+- `getSignalPalette(tone)` → `{ surface, border, accent, text, track }`
+- Icon: `@expo/vector-icons` dan `lucide-react-native`
+
+## TypeScript Rules
+
+- Strict mode. Jangan pakai `any`.
+- Pertahankan `as const` inference untuk mapping data.
+- Bit map union type harus sinkron dengan source mapping.
+- Ref pattern untuk menghindari infinite loop effect: `const fooRef = useRef(foo); fooRef.current = foo;`
+
+## Git Safety
+
+- Worktree bisa dirty. Jangan `git reset --hard`.
 - Jangan checkout/revert file tanpa instruksi eksplisit.
 - Jangan hapus file yang tidak terkait.
-- Sebelum mengubah file yang sedang banyak berubah, baca bagian terkait dan patch minimum.
-
-## Dependency Rules
-
-- Jika perlu package Expo, gunakan versi SDK 56 dan prefer:
-
-```bash
-npx expo install <package>
-```
-
-- Jangan upgrade Expo, React, React Native, atau dependency besar tanpa request eksplisit.
-- Jangan ubah `package.json`, lockfile, native config, atau build config jika task tidak memerlukannya.
 
 ## Final Response
 
-Jawab ringkas dalam bahasa user. Sertakan:
-
-- file yang diubah,
-- inti perubahan,
-- hasil `npx tsc --noEmit`.
-
-Jika tidak bisa menjalankan validasi, jelaskan alasannya secara eksplisit.
+Setelah selesai, jawab ringkas dalam bahasa user:
+- file yang diubah
+- inti perubahan
+- hasil `npx tsc --noEmit`
