@@ -6,11 +6,11 @@ import { Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAutoCooldown, type CooldownTarget } from '@/hooks/use-auto-cooldown';
+import { useAutoFgsConfirmed } from '@/hooks/use-auto-fgs-confirmed';
 import {
   AUTO_PUMP_DENSITY_OFF_PPM,
   AUTO_PUMP_DENSITY_ON_PPM,
   AUTO_PUMP_TEMP_OFF_C,
-  useAutoPumpActivation,
 } from '@/hooks/use-auto-pump-activation';
 import {
   usePendingCommand,
@@ -894,6 +894,22 @@ export default function AccommodationRoom() {
     () => (metricsTopic.payload ? getAccommodationRoomMetricsState(metricsTopic.payload) : null),
     [metricsTopic.payload]
   );
+  const alarmState = useMemo(
+    () =>
+      metricsTopic.payload
+        ? getAccommodationRoomAlarmState(metricsTopic.payload)
+        : {
+            alarmStatusCode: null,
+            alarmStatusLabel: 'OFF',
+            sirenOn: null,
+            lastSignalAt: null,
+            outputs: ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS.map((item) => ({
+              ...item,
+              active: false,
+            })),
+          },
+    [metricsTopic.payload]
+  );
 
   useEffect(() => {
     if (!metricsState) {
@@ -911,25 +927,17 @@ export default function AccommodationRoom() {
     };
   }, [metricsState]);
 
-  // Auto pump activation + cooldown (mobile-only, no backend):
-  //  • When the confirmed temperature / smoke density crosses the fire threshold
-  //    AND FROM PLC bit 13 (Remote Mode) is active, drive TO_PLC W2 (Pump
-  //    Activation) so the PLC starts the pump — cleared once things fall back to
-  //    normal. Mirrors the manual W2 command in src/app/stations/pump-room.tsx.
-  //  • While FROM PLC reports a running pump (bit 0 / bit 1), nudge temperature
-  //    and smoke density back down until they reach normal.
+  // Auto cooldown only: while FROM PLC reports a running pump (bit 0 / bit 1),
+  // nudge temperature and smoke density back down until they reach normal.
+  // W2 Remote Activation is manual-only from src/app/stations/pump-room.tsx.
   const confirmedTemperatureC = parseAccommodationTemperature(confirmedForm.temperatureValue);
   const confirmedSmokeDensityPpm = parseAccommodationSmokeDensity(confirmedForm.smokeDensityValue);
   const smokeDensityCounterId =
     CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
 
-  useAutoPumpActivation({
+  useAutoFgsConfirmed({
     enabled: status === 'connected',
-    fire: {
-      temperatureC: confirmedTemperatureC,
-      densityEnabled: smokeDensityCounterId !== null,
-      densityPpm: confirmedSmokeDensityPpm,
-    },
+    alarmStatusCode: alarmState.alarmStatusCode,
     metricsPayload: metricsTopic.payload,
     publishTopic,
   });
@@ -1017,22 +1025,6 @@ export default function AccommodationRoom() {
     smokeDensityDebounceRef.current = null;
   }, []);
 
-  const alarmState = useMemo(
-    () =>
-      metricsTopic.payload
-        ? getAccommodationRoomAlarmState(metricsTopic.payload)
-        : {
-            alarmStatusCode: null,
-            alarmStatusLabel: 'OFF',
-            sirenOn: null,
-            lastSignalAt: null,
-            outputs: ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS.map((item) => ({
-              ...item,
-              active: false,
-            })),
-          },
-    [metricsTopic.payload]
-  );
   const zoneHeatingState = useMemo(
     () =>
       metricsTopic.payload

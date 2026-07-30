@@ -30,7 +30,7 @@ di mqtt : device id nya 7193
     - W[0] : Pressure Transmitter 1
     - W[1] : Pressure Transmitter 2
     - W[2] : Ngirim Pump Activation
-    - W[3] : spare
+    - W[3] : FGS Confirmed (Alarm ON = 1, Alarm OFF = 0)
 
 
 referensi :

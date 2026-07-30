@@ -186,8 +186,8 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
     //  • FROM PLC - SIEMENS (6563): READ-only. One uint16 word, W[0], carrying
     //    the DO output status (14 channels) the PLC applied. Bit-unpacked on read.
     //  • TO PLC - SIEMENS (7193): the WRITE target. A packed uint64 (4×uint16):
-    //    W[0]=PT1 counter, W[1]=PT2 counter, W[2]=Pump Activation (momentary),
-    //    W[3]=spare. DO is NOT written — it is received on FROM PLC only.
+    //    W[0]=PT1 counter, W[1]=PT2 counter, W[2]=Pump Activation,
+    //    W[3]=FGS Confirmed. DO is NOT written — it is received on FROM PLC only.
     fromPlc: {
       deviceId: 6563,
     },
@@ -208,30 +208,31 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
 export const TO_PLC_WORD_INDEX = {
   pressurePump1: 0, // W[0] — PT1 set-point counter
   pressurePump2: 1, // W[1] — PT2 set-point counter
-  pumpActivation: 2, // W[2] — Pump Activation, momentary (1 = fire, else 0)
-  spare: 3, // W[3] — reserved, always 0
+  pumpActivation: 2, // W[2] — Pump Activation (1 = fire, else 0)
+  fgsConfirmed: 3, // W[3] — accommodation alarm confirmed fire (1 = ON, 0 = OFF)
 } as const;
 
 export const TO_PLC_WORD_COUNT = 4;
 
-// Pack the two pressure counters + the momentary pump-activation word into the
+// Pack the two pressure counters, pump activation, and FGS confirmation into the
 // single uint64 value the TO PLC counter expects — the "by words" layer (see
-// splitWords/joinWords). Pump Activation is a one-shot command: pass 1 only on
-// the publish that fires it, otherwise 0. The spare word stays 0, so the result
-// is < 2**48, safely inside Number.MAX_SAFE_INTEGER (no BigInt needed).
+// splitWords/joinWords). The result remains safely inside Number.MAX_SAFE_INTEGER.
 export function packToPlcCommand({
   pressurePump1Counter,
   pressurePump2Counter,
   pumpActivation = 0,
+  fgsConfirmed = 0,
 }: {
   pressurePump1Counter: number;
   pressurePump2Counter: number;
   pumpActivation?: number;
+  fgsConfirmed?: number;
 }): number {
   const words = new Array(TO_PLC_WORD_COUNT).fill(0);
   words[TO_PLC_WORD_INDEX.pressurePump1] = pressurePump1Counter;
   words[TO_PLC_WORD_INDEX.pressurePump2] = pressurePump2Counter;
   words[TO_PLC_WORD_INDEX.pumpActivation] = pumpActivation;
+  words[TO_PLC_WORD_INDEX.fgsConfirmed] = fgsConfirmed;
   return joinWords(words);
 }
 
@@ -244,7 +245,18 @@ export function unpackToPlcCommand(value: number) {
     pressurePump1Counter: words[TO_PLC_WORD_INDEX.pressurePump1],
     pressurePump2Counter: words[TO_PLC_WORD_INDEX.pressurePump2],
     pumpActivation: words[TO_PLC_WORD_INDEX.pumpActivation],
+    fgsConfirmed: words[TO_PLC_WORD_INDEX.fgsConfirmed],
   };
+}
+
+export function getAccommodationAlarmFgsConfirmed(
+  alarmStatusCode: CarloGavazziAlarmStatusCode | null
+): 0 | 1 | null {
+  if (alarmStatusCode === null) {
+    return null;
+  }
+
+  return alarmStatusCode === 2 || alarmStatusCode === 4 ? 1 : 0;
 }
 
 const VALUE_COMMANDS = ['Increase', 'Decrease', 'SetValue'] as const;

@@ -44,7 +44,6 @@ type ToPlcPendingKind = PumpRoomPlcInputKey | 'pumpActivation';
 type ToPlcCommandSnapshot = {
   kind: ToPlcPendingKind;
   baselineReceivedAt: number | null;
-  expectedPacked: number;
   successMessage: string;
   nextPumpActivationValue?: 0 | 1;
   previousNextPumpActivationValue?: 0 | 1;
@@ -158,13 +157,13 @@ function getPressureTone(bar: number): SignalTone {
   return 'normal';
 }
 
-// Pack the current pressure drafts (+ optional remote activation bit) into
-// the TO PLC uint64 (7193): W0=PT1, W1=PT2, W2=Remote Activation, W3=spare.
-function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0) {
+// Pack the current pressure drafts and PLC flags into the TO PLC uint64 (7193).
+function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0, fgsConfirmed = 0) {
   return packToPlcCommand({
     pressurePump1Counter: pressureBarToCounter(parsePressureBar(inputs.pressurePump1)),
     pressurePump2Counter: pressureBarToCounter(parsePressureBar(inputs.pressurePump2)),
     pumpActivation,
+    fgsConfirmed,
   });
 }
 
@@ -308,11 +307,13 @@ function ToPlcWordDisplay({
   pt1Counter,
   pt2Counter,
   pumpActivation,
+  fgsConfirmed,
   packed,
 }: {
   pt1Counter: number;
   pt2Counter: number;
   pumpActivation: number;
+  fgsConfirmed: number;
   packed: number;
 }) {
   // Show every one of the 4 words so the packed uint64 is fully transparent.
@@ -320,7 +321,7 @@ function ToPlcWordDisplay({
     { label: 'W0 · PT1', value: pt1Counter, active: pt1Counter > 0 },
     { label: 'W1 · PT2', value: pt2Counter, active: pt2Counter > 0 },
     { label: 'W2 · Pump Act', value: pumpActivation, active: pumpActivation > 0 },
-    { label: 'W3 · spare', value: 0, active: false },
+    { label: 'W3 · FGS Confirmed', value: fgsConfirmed, active: fgsConfirmed > 0 },
   ];
   return (
     <View style={s.toPlcBlock}>
@@ -518,12 +519,13 @@ export default function PumpRoom() {
   const commandErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [remoteActivationValue, setRemoteActivationValue] = useState<0 | 1>(0);
+  const [fgsConfirmedValue, setFgsConfirmedValue] = useState<0 | 1>(0);
   const [nextPumpActivationValue, setNextPumpActivationValue] = useState<0 | 1>(1);
 
   // W[2] is held only after MQTT feedback confirms the remote activation/reset command.
   const pt1Counter = pressureBarToCounter(parsePressureBar(injectDraft.pressurePump1));
   const pt2Counter = pressureBarToCounter(parsePressureBar(injectDraft.pressurePump2));
-  const toPlcPacked = packInputs(injectDraft, remoteActivationValue);
+  const toPlcPacked = packInputs(injectDraft, remoteActivationValue, fgsConfirmedValue);
 
   const flashInject = useCallback((message: string) => {
     setInjectFlash(message);
@@ -630,6 +632,8 @@ export default function PumpRoom() {
     const gatewayWords = unpackToPlcCommand(roundedToPlcValue);
     const gatewayRemoteActivationValue: 0 | 1 =
       Math.round(gatewayWords.pumpActivation) >= 1 ? 1 : 0;
+    const gatewayFgsConfirmedValue: 0 | 1 =
+      Math.round(gatewayWords.fgsConfirmed) >= 1 ? 1 : 0;
     const ackedCommands = Object.values(pendingToPlcCommandMap).filter((command) => {
       const isFresh =
         command.snapshot.baselineReceivedAt === null
@@ -640,7 +644,11 @@ export default function PumpRoom() {
         return isFresh;
       }
 
-      return isFresh && command.snapshot.expectedPacked === roundedToPlcValue;
+      return (
+        isFresh &&
+        isPressureCommand(command) &&
+        gatewayInputs[command.snapshot.pressureField] === command.snapshot.nextValue
+      );
     });
     const isCommandAcked = (commandId: string) =>
       ackedCommands.some((command) => command.id === commandId);
@@ -689,6 +697,7 @@ export default function PumpRoom() {
       setRemoteActivationValue(gatewayRemoteActivationValue);
       setNextPumpActivationValue(gatewayRemoteActivationValue === 1 ? 0 : 1);
     }
+    setFgsConfirmedValue(gatewayFgsConfirmedValue);
 
     if (ackedCommands.length === 0) {
       return;
@@ -757,7 +766,6 @@ export default function PumpRoom() {
       snapshot: Omit<
         ToPlcCommandSnapshot,
         | 'baselineReceivedAt'
-        | 'expectedPacked'
         | 'previousNextPumpActivationValue'
         | 'previousRemoteActivationValue'
       >
@@ -779,6 +787,7 @@ export default function PumpRoom() {
         pressurePump1Counter,
         pressurePump2Counter,
         pumpActivation: overrides.pumpActivation ?? remoteActivationValue,
+        fgsConfirmed: fgsConfirmedValue,
       });
       const pendingCommand = startToPlcCommand({
         id: commandId,
@@ -786,7 +795,6 @@ export default function PumpRoom() {
         snapshot: {
           ...snapshot,
           baselineReceivedAt: metricsReceivedAt,
-          expectedPacked: packed,
           previousNextPumpActivationValue: nextPumpActivationValue,
           previousRemoteActivationValue: remoteActivationValue,
         },
@@ -826,6 +834,7 @@ export default function PumpRoom() {
     },
     [
       isToPlcCommandPending,
+      fgsConfirmedValue,
       metricsReceivedAt,
       nextPumpActivationValue,
       publishPackedToPlc,
@@ -945,7 +954,9 @@ export default function PumpRoom() {
     if (status !== 'connected') {
       setRemoteActivationValue(valueToSend);
       setNextPumpActivationValue(nextValue);
-      flashInject(`SIM — ${label} → ${packInputs(injectDraftRef.current, valueToSend)}`);
+      flashInject(
+        `SIM — ${label} → ${packInputs(injectDraftRef.current, valueToSend, fgsConfirmedValue)}`
+      );
       return;
     }
 
@@ -961,6 +972,7 @@ export default function PumpRoom() {
     );
   }, [
     flashInject,
+    fgsConfirmedValue,
     isToPlcCommandPending,
     nextPumpActivationValue,
     sendToPlcCommand,
@@ -1042,6 +1054,7 @@ export default function PumpRoom() {
               pt1Counter={pt1Counter}
               pt2Counter={pt2Counter}
               pumpActivation={remoteActivationValue}
+              fgsConfirmed={fgsConfirmedValue}
               packed={toPlcPacked}
             />
             {/* Remote Activation / Reset — W2 command edge */}

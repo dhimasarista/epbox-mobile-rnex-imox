@@ -152,10 +152,10 @@ receive-only, and its TO PLC writes are fire-and-forget.
 opposite directions: **FROM PLC (6563)** is read-only — one uint16 word carrying
 the 14-channel DO output status, bit-unpacked on read (the app never writes DO).
 **TO PLC (7193)** is the sole write target: a packed **uint64** (4×uint16) where
-`W[0]` = PT1 counter, `W[1]` = PT2 counter, `W[2]` = Pump Activation (momentary
-`1`), `W[3]` = spare. A pressure slider publishes one `SetValue(7193, packed)`
-with `W[2]=0`; the Pump Activation button publishes once with `W[2]=1`. Unchanged
-words are re-sent from the latest draft so nothing is clobbered. When MQTT is
+`W[0]` = PT1 counter, `W[1]` = PT2 counter, `W[2]` = Pump Activation (`1` =
+active), and `W[3]` = FGS Confirmed. Accommodation alarm status code 2/4 sends
+`W[3]=1`; status code 1/3/5/6 sends `W[3]=0`. Unchanged words are re-sent from
+the latest metrics/draft so another TO PLC function is not clobbered. When MQTT is
 offline the tab runs a **local simulation** to verify the pack/unpack maths.
 `DO_BIT_MAP` / `packToPlcCommand` live in `pump-room.tsx` / `mqtt-topics.ts`; full
 layout in `docs/Protocols/Dashboard-SCADA.md` §5.

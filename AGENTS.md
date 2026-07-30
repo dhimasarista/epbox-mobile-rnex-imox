@@ -75,7 +75,7 @@ AuthProvider
 | W[0] | PT-001 pressure set-point counter |
 | W[1] | PT-002 pressure set-point counter |
 | W[2] | Pump Activation (1 = fire) |
-| W[3] | Spare (always 0) |
+| W[3] | FGS Confirmed (Accommodation alarm ON=1, OFF=0) |
 
 `packToPlcCommand()` / `unpackToPlcCommand()` di `mqtt-topics.ts`.
 
@@ -99,6 +99,7 @@ Jangan buat pending timeout ad-hoc.
 ## Auto Hooks (BUKAN pending-command-based)
 
 - `useAutoPumpActivation`: watch temperature + smoke density → publish Pump Activation (W2=1/0) via TO PLC. Gate: FROM PLC bit 13 (Remote Mode) harus aktif.
+- `useAutoFgsConfirmed`: alarm status code 2/4 → W3=1; status code 1/3/5/6 → W3=0. Preserve W0-W2.
 - `useAutoCooldown`: selama pump running (FROM PLC bit 0 atau 1), publish SetValue decrement ke counter temperature/smoke tiap 0.5–1s.
 - Keduanya langsung publish, TIDAK pakai pending command.
 
