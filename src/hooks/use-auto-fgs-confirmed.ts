@@ -3,11 +3,9 @@ import { useEffect, useRef } from 'react';
 import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
-  getAccommodationAlarmFgsConfirmed,
   getCarloGavazziCounterNumericValue,
   packToPlcCommand,
   unpackToPlcCommand,
-  type CarloGavazziAlarmStatusCode,
 } from '@/lib/mqtt-topics';
 import type { PublishTopicFn } from '@/providers/mqtt-provider';
 
@@ -18,14 +16,12 @@ const FGS_SMOKE_DENSITY_ALERT_PPM = 11;
 
 export function useAutoFgsConfirmed({
   enabled,
-  alarmStatusCode,
   temperatureC,
   smokeDensityPpm,
   metricsPayload,
   publishTopic,
 }: {
   enabled: boolean;
-  alarmStatusCode: CarloGavazziAlarmStatusCode | null;
   temperatureC: number | null;
   smokeDensityPpm: number | null;
   metricsPayload: MetricsPayload | null;
@@ -36,10 +32,9 @@ export function useAutoFgsConfirmed({
   publishRef.current = publishTopic;
 
   useEffect(() => {
-    const alarmTriggered = getAccommodationAlarmFgsConfirmed(alarmStatusCode) === 1;
     const tempTriggered = temperatureC !== null && temperatureC >= FGS_TEMPERATURE_ALERT_C;
     const smokeTriggered = smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_ALERT_PPM;
-    const desiredFgsConfirmed: 0 | 1 = alarmTriggered || tempTriggered || smokeTriggered ? 1 : 0;
+    const desiredFgsConfirmed: 0 | 1 = tempTriggered || smokeTriggered ? 1 : 0;
 
     if (!enabled || !metricsPayload || desiredFgsConfirmed === null) {
       lastPublishedValueRef.current = null;
@@ -83,5 +78,5 @@ export function useAutoFgsConfirmed({
           lastPublishedValueRef.current = null;
         }
       });
-  }, [alarmStatusCode, temperatureC, smokeDensityPpm, enabled, metricsPayload]);
+  }, [temperatureC, smokeDensityPpm, enabled, metricsPayload]);
 }
