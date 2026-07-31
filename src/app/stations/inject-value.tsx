@@ -9,7 +9,6 @@ import { useAutoCooldown, type CooldownTarget } from '@/hooks/use-auto-cooldown'
 import { useAutoFgsConfirmed } from '@/hooks/use-auto-fgs-confirmed';
 import {
   AUTO_PUMP_DENSITY_OFF_PPM,
-  AUTO_PUMP_DENSITY_ON_PPM,
   AUTO_PUMP_TEMP_OFF_C,
 } from '@/hooks/use-auto-pump-activation';
 import {
@@ -44,8 +43,10 @@ import { AppColors } from '@/styles';
 import { getSignalPalette, styles, type SignalTone } from '@/styles/screens/station.styles';
 
 const ACCOMMODATION_TEMP_WARNING_C = 40;
-const ACCOMMODATION_TEMP_ALERT_C = 55;
+const ACCOMMODATION_TEMP_ALERT_C = 82;
 const ACCOMMODATION_TEMP_MAX_C = 120;
+const ACCOMMODATION_SMOKE_DENSITY_WARNING_PPM = 5;
+const ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM = 11;
 const COMMAND_DEBOUNCE_MS = 250;
 
 type AccommodationEditableKey = 'temperatureValue' | 'smokeDensityValue';
@@ -92,6 +93,7 @@ function getAccommodationFieldValue(
 ) {
   return field === 'temperatureValue' ? form.temperatureValue : form.smokeDensityValue;
 }
+
 
 function getAccommodationTemperatureSignalTone(value: number): SignalTone {
   if (value >= ACCOMMODATION_TEMP_ALERT_C) {
@@ -242,38 +244,31 @@ function InjectValueHero({
   onToggleCooldownSim: () => void;
 }) {
   return (
-    <View style={styles.heroCard}>
-      <View style={styles.heroTopRow}>
-        {/* Sync badge doubles as the cooldown-simulation switch: tap to stop the
-            auto temperature / smoke-density decrease while a pump is running. */}
-        <TouchableOpacity
-          style={[styles.heroBadge, !isCooldownSimEnabled && { opacity: 0.80 }]}
-          onPress={onToggleCooldownSim}
-          activeOpacity={0.8}
-          accessibilityRole="switch"
-          accessibilityState={{ checked: isCooldownSimEnabled }}
-          accessibilityLabel="Auto cooldown simulation">
-          <MaterialCommunityIcons
-            name={isCooldownSimEnabled ? 'bed-outline' : 'pause'}
-            size={14}
-            color={AppColors.primary}
-          />
-          <Text style={styles.heroBadgeText}>
-            {isCooldownSimEnabled ? syncLabel : `Off`}
-          </Text>
-        </TouchableOpacity>
-        <View style={styles.liveChip}>
-          <View
-            style={[
-              styles.liveDot,
-              { backgroundColor: isPending ? AppColors.warning : AppColors.success },
-            ]}
-          />
-          <Text style={styles.liveChipText}>{syncHint}</Text>
-        </View>
-      </View>
-
-      <Text style={styles.heroSubtitle}>This room used for Inject Data to CG Gateway & PLC, please use value properly.</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <TouchableOpacity
+        style={[styles.heroBadge, !isCooldownSimEnabled && { opacity: 0.75 }]}
+        onPress={onToggleCooldownSim}
+        activeOpacity={0.8}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: isCooldownSimEnabled }}
+        accessibilityLabel="Auto cooldown simulation">
+        <MaterialCommunityIcons
+          name={isCooldownSimEnabled ? 'pause' : 'play'}
+          size={14}
+          color={AppColors.primary}
+        />
+        <Text style={styles.heroBadgeText}>
+          {isCooldownSimEnabled ? syncLabel : 'Off'}
+        </Text>
+      </TouchableOpacity>
+      <Text
+        style={{
+          fontSize: 12,
+          fontWeight: '600',
+          color: isPending ? AppColors.warning : AppColors.textSubtle,
+        }}>
+        {syncHint}
+      </Text>
     </View>
   );
 }
@@ -281,27 +276,9 @@ function InjectValueHero({
 function EngineeringSignalBands({ tone }: { tone: SignalTone }) {
   return (
     <View style={styles.signalBandsRow}>
-      <View
-        style={[
-          styles.signalBand,
-          styles.signalBandNormal,
-          tone === 'normal' && styles.signalBandActive,
-        ]}
-      />
-      <View
-        style={[
-          styles.signalBand,
-          styles.signalBandWarning,
-          tone === 'warning' && styles.signalBandActive,
-        ]}
-      />
-      <View
-        style={[
-          styles.signalBand,
-          styles.signalBandDanger,
-          tone === 'danger' && styles.signalBandActive,
-        ]}
-      />
+      <View style={[styles.signalBand, styles.signalBandNormal, tone === 'normal' && styles.signalBandActive]} />
+      <View style={[styles.signalBand, styles.signalBandWarning, tone === 'warning' && styles.signalBandActive]} />
+      <View style={[styles.signalBand, styles.signalBandDanger, tone === 'danger' && styles.signalBandActive]} />
     </View>
   );
 }
@@ -309,14 +286,12 @@ function EngineeringSignalBands({ tone }: { tone: SignalTone }) {
 function AccommodationTemperatureField({
   confirmedValue,
   draftValue,
-  hint,
   heatingState,
   disabled,
   onChange,
 }: {
   confirmedValue: string;
   draftValue: string;
-  hint: string;
   heatingState: AccommodationRoomZoneHeatingState;
   disabled: boolean;
   onChange: (value: string) => void;
@@ -477,7 +452,7 @@ function AccommodationTemperatureField({
 
         <View style={styles.sliderRangeRow}>
           <Text style={styles.sliderRangeText}>0 C</Text>
-          <View
+          {/* <View
             style={[
               styles.signalStateBadge,
               isAntifreezeActive
@@ -497,7 +472,7 @@ function AccommodationTemperatureField({
               ]}>
               {getAccommodationTemperatureLabel(signalTone, heatingState.heatingStatusValue)}
             </Text>
-          </View>
+          </View> */}
           <Text style={styles.sliderRangeText}>{ACCOMMODATION_TEMP_MAX_C} C</Text>
         </View>
 
@@ -508,11 +483,11 @@ function AccommodationTemperatureField({
 }
 
 function getAccommodationSmokeDensityTone(value: number): SignalTone {
-  if (value >= AUTO_PUMP_DENSITY_ON_PPM) {
+  if (value >= ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM) {
     return 'danger';
   }
 
-  if (value >= AUTO_PUMP_DENSITY_OFF_PPM) {
+  if (value >= ACCOMMODATION_SMOKE_DENSITY_WARNING_PPM) {
     return 'warning';
   }
 
@@ -818,7 +793,6 @@ function AccommodationSourceSection({
   confirmedForm,
   draftForm,
   heatingState,
-  temperatureHint,
   isTemperaturePending,
   isSmokeDensityPending,
   onTemperatureChange,
@@ -827,7 +801,6 @@ function AccommodationSourceSection({
   confirmedForm: AccommodationRoomInputs;
   draftForm: AccommodationRoomInputs;
   heatingState: AccommodationRoomZoneHeatingState;
-  temperatureHint: string;
   isTemperaturePending: boolean;
   isSmokeDensityPending: boolean;
   onTemperatureChange: (value: string) => void;
@@ -838,7 +811,6 @@ function AccommodationSourceSection({
       <AccommodationTemperatureField
         confirmedValue={confirmedForm.temperatureValue}
         draftValue={draftForm.temperatureValue}
-        hint={temperatureHint}
         heatingState={heatingState}
         disabled={isTemperaturePending}
         onChange={onTemperatureChange}
@@ -1571,37 +1543,6 @@ export default function InjectValue({
     return '00:00:00';
   }, [isAnyPending, lastCommandError, lastMetricsAt, status]);
 
-  const temperatureHint = useMemo(() => {
-    if (lastCommandError && isTemperaturePending) {
-      return lastCommandError;
-    }
-
-    if (isTemperaturePending) {
-      return `Requested ${
-        pendingTemperatureCommand?.label ?? draftForm.temperatureValue
-      }.`;
-    }
-
-    if (status !== 'connected') {
-      return 'Disconnected';
-    }
-
-    if (lastMetricsAt) {
-      return `Confirmed temperature ${confirmedForm.temperatureValue} from metrics at ${formatEventTime(
-        lastMetricsAt
-      )}.`;
-    }
-
-    return 'Temperature chip and dot follow the metrics response, not the slider draft.';
-  }, [
-    confirmedForm.temperatureValue,
-    draftForm.temperatureValue,
-    isTemperaturePending,
-    lastCommandError,
-    lastMetricsAt,
-    pendingTemperatureCommand,
-    status,
-  ]);
   const latestPendingAlarmCommand = useMemo(() => {
     if (pendingAlarmEntries.length === 0) {
       return null;
@@ -1658,7 +1599,6 @@ export default function InjectValue({
         confirmedForm={confirmedForm}
         draftForm={draftForm}
         heatingState={zoneHeatingState}
-        temperatureHint={temperatureHint}
         isTemperaturePending={isTemperaturePending}
         isSmokeDensityPending={isSmokeDensityPending}
         onTemperatureChange={handleTemperatureChange}

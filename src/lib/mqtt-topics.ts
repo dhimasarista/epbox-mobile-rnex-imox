@@ -201,6 +201,22 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
     // app does not read them back, so no per-transmitter read ids live here.
     // Devices 6983 / 7019 stay documented in docs/device-id-registry.md for probing.
   },
+  // Dedicated Accommodation Room station screen (src/app/stations/accommodation-room.tsx).
+  // Separate device ids from `accommodationRoom` above (that block belongs to the
+  // Engine Room inject-value tab's own sensors).
+  accommodationRoomStation: {
+    counterIds: {
+      temperature: 8843,
+      smokeDensity: 8879,
+    },
+  },
+  // Dedicated Generator Room station screen (src/app/stations/generator-room.tsx).
+  generatorRoomStation: {
+    counterIds: {
+      temperature: 8739,
+      smokeDensity: 8775,
+    },
+  },
 } as const;
 
 // TO PLC - SIEMENS (7193) is a packed uint64 exposed as one counter value.
@@ -338,26 +354,20 @@ function createJsonTopicDefinition<TKey extends MqttTopicKey>(
   };
 }
 
-// The gateway splits its device/signal snapshots across three sibling topics
-// instead of one. Each carries the same CarloGavazziMetricsPayload shape but a
-// disjoint set of devices (by id), so the app subscribes to all three and merges
-// them into the single `gatewayMetrics` store (union by device id). Kept in sync
-// with docs/Protocols/MQTT.md "Receive Signals".
+// The gateway publishes every device/signal snapshot back on one single door —
+// `.../metrics` — carrying the full CarloGavazziMetricsPayload. Kept in sync with
+// docs/Protocols/MQTT.md "Receive Signals".
 export const GATEWAY_METRICS_SUBSCRIBE_TOPICS = [
-  `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/metrics`, // FROM PLC 6563, TO PLC 7193
-  `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/pressure-transmitter`, // PT1 6983, PT2 7019
-  `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/acc-room/metrics`, // smoke 3549, temp 3585, alarm 3667, zone 4147
+  `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/metrics`,
 ] as const;
 
 export const MQTT_TOPICS = {
   gatewayMetrics: createJsonTopicDefinition({
     key: 'gatewayMetrics',
-    // Primary topic (used for the disk cache write); all three metrics topics in
-    // GATEWAY_METRICS_SUBSCRIBE_TOPICS are subscribed and routed into this store.
     topic: `${CARLO_GAVAZZI_GATEWAY_CONFIG.topicRoot}/metrics`,
     subscribeTopics: GATEWAY_METRICS_SUBSCRIBE_TOPICS,
     label: 'Gateway Metrics',
-    description: 'Device and signal snapshots returned by the gateway (metrics + pressure-transmitter + acc-room).',
+    description: 'Device and signal snapshots returned by the gateway on a single metrics topic.',
     direction: 'subscribe',
   }),
   gatewayOtCommand: createJsonTopicDefinition({
@@ -615,14 +625,15 @@ export function getCarloGavazziCounterBooleanValue(
   return numericValue >= 0.5;
 }
 
-export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPayload) {
-  const temperatureNumber = getCarloGavazziCounterNumericValue(
-    payload,
-    CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.temperature
-  );
-  const smokeDensityId = CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
+export function getCounterRoomMetricsState(
+  payload: CarloGavazziMetricsPayload,
+  counterIds: { temperature: number; smokeDensity: number | null }
+) {
+  const temperatureNumber = getCarloGavazziCounterNumericValue(payload, counterIds.temperature);
   const smokeDensityNumber =
-    smokeDensityId === null ? null : getCarloGavazziCounterNumericValue(payload, smokeDensityId);
+    counterIds.smokeDensity === null
+      ? null
+      : getCarloGavazziCounterNumericValue(payload, counterIds.smokeDensity);
 
   return {
     temperatureNumber,
@@ -636,6 +647,10 @@ export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPay
         ? null
         : formatAccommodationSmokeDensity(Math.round(smokeDensityNumber)),
   };
+}
+
+export function getAccommodationRoomMetricsState(payload: CarloGavazziMetricsPayload) {
+  return getCounterRoomMetricsState(payload, CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds);
 }
 
 // The PLC expects the pressure set-point in the engineering unit **bar**, not the

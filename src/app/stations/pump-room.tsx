@@ -18,6 +18,8 @@ import {
 import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
+  getAccommodationRoomAlarmState,
+  getAccommodationRoomMetricsState,
   getCarloGavazziCounterNumericValue,
   packToPlcCommand,
   pressureBarToCounter,
@@ -58,6 +60,11 @@ type ToPlcCommandSnapshot = {
 function getToPlcCommandId(kind: ToPlcPendingKind) {
   return `to-plc:${kind}`;
 }
+
+// Remote Activation is blocked when the accommodation zone is already at threshold
+// or alarm is active — manual W2 should not fire while auto-systems are engaged.
+const ZONE_TEMP_BLOCK_C = 40;
+const ZONE_SMOKE_BLOCK_PPM = 5;
 
 function isPressureCommand(
   command: PendingCommandState<ToPlcCommandSnapshot>
@@ -415,33 +422,41 @@ function PumpActivationButton({
   simulation,
   disabled,
   nextValue,
+  blockReason,
   onPress,
 }: {
   simulation: boolean;
   disabled: boolean;
   nextValue: 0 | 1;
+  blockReason?: string | null;
   onPress: () => void;
 }) {
   const isReset = nextValue === 0;
   const label = isReset ? 'Remote Reset' : 'Remote Activation';
+  const isBlocked = !!blockReason;
 
   return (
-    <TouchableOpacity
-      style={[
-        s.pumpActBtn,
-        simulation && s.pumpActBtnSim,
-        isReset && s.pumpActBtnOff,
-        disabled && s.pumpActBtnDisabled,
-      ]}
-      disabled={disabled}
-      onPress={onPress}
-      activeOpacity={0.85}
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      accessibilityLabel={label}>
-      <Feather name={isReset ? 'power' : 'zap'} size={16} color={AppColors.textInverse} />
-      <Text style={s.pumpActBtnText}>{label}</Text>
-    </TouchableOpacity>
+    <View>
+      <TouchableOpacity
+        style={[
+          s.pumpActBtn,
+          simulation && s.pumpActBtnSim,
+          isReset && s.pumpActBtnOff,
+          (disabled || isBlocked) && s.pumpActBtnDisabled,
+        ]}
+        disabled={disabled || isBlocked}
+        onPress={onPress}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: disabled || isBlocked }}
+        accessibilityLabel={label}>
+        <Feather name={isReset ? 'power' : 'zap'} size={16} color={AppColors.textInverse} />
+        <Text style={s.pumpActBtnText}>{label}</Text>
+      </TouchableOpacity>
+      {blockReason ? (
+        <Text style={s.pumpActBlockReason}>{blockReason} — remote activation locked</Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -482,6 +497,24 @@ export default function PumpRoom({
   recordLatencySampleRef.current = recordLatencySample;
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
+
+  const zoneBlockReason = useMemo(() => {
+    const payload = metricsTopic.payload;
+    if (!payload) return null;
+
+    const accMetrics = getAccommodationRoomMetricsState(payload);
+    const accAlarm = getAccommodationRoomAlarmState(payload);
+
+    const tempC = accMetrics.temperatureNumber !== null ? Math.round(accMetrics.temperatureNumber) : null;
+    const smokePpm = accMetrics.smokeDensityNumber !== null ? Math.round(accMetrics.smokeDensityNumber) : null;
+    const alarmCode = accAlarm.alarmStatusCode;
+    const isAlarmActive = alarmCode !== null && alarmCode !== 1;
+
+    if (isAlarmActive) return 'Accommodation alarm active';
+    if (tempC !== null && tempC >= ZONE_TEMP_BLOCK_C) return `Zone temp ${tempC}°C at threshold`;
+    if (smokePpm !== null && smokePpm >= ZONE_SMOKE_BLOCK_PPM) return `Smoke ${smokePpm} ppm at threshold`;
+    return null;
+  }, [metricsTopic.payload]);
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
   const {
     commands: pendingToPlcCommandMap,
@@ -1068,6 +1101,7 @@ export default function PumpRoom({
             simulation={isSimulation}
             disabled={isPumpActivationPending}
             nextValue={nextPumpActivationValue}
+            blockReason={zoneBlockReason}
             onPress={triggerPumpActivation}
           />
 
@@ -1260,6 +1294,7 @@ const s = StyleSheet.create({
   pumpActBtnOff: { backgroundColor: AppColors.text },
   pumpActBtnDisabled: { opacity: 0.55 },
   pumpActBtnText: { fontSize: 14, fontWeight: '800', color: AppColors.textInverse, letterSpacing: 0.3 },
+  pumpActBlockReason: { marginTop: 6, fontSize: 11, fontWeight: '500', color: AppColors.warning, textAlign: 'center' },
 
   derivedAlarmCard: {
     flexDirection: 'row',
