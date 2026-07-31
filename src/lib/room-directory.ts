@@ -1,25 +1,14 @@
 export const MONITORED_ROOMS = [
   {
-    id: 'pump-room',
-    title: 'Pump Room',
-    roomId: 'PR-001',
-    deck: 'Lower Deck',
+    id: 'engine-room',
+    title: 'Engine Room',
+    roomId: 'ER-001',
+    deck: 'Lower Deck · Safety Deck',
     status: 'Active',
-    metricLabel: 'Discharge Flow',
-    icon: 'fire-hydrant',
+    metricLabel: 'PT1 / Zone Temp',
+    icon: 'engine-outline',
     active: true,
-    route: '/stations/pump-room',
-  },
-  {
-    id: 'accommodation-room',
-    title: 'Accommodation Room',
-    roomId: 'AR-001',
-    deck: 'Safety Deck',
-    status: 'Active',
-    metricLabel: 'Zone Temp',
-    icon: 'bed-outline',
-    active: true,
-    route: '/stations/accommodation-room',
+    route: '/stations/engine-room',
   },
 ] as const;
 

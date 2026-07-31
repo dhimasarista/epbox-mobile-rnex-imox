@@ -228,7 +228,7 @@ function TabBar({ active, onChange }: { active: ActiveTab; onChange: (t: ActiveT
         onPress={() => onChange('inject')}
         accessibilityRole="tab"
         accessibilityState={{ selected: active === 'inject' }}>
-        <Text style={[s.tabBtnText, active === 'inject' && s.tabBtnTextActive]}>TO PLC</Text>
+        <Text style={[s.tabBtnText, active === 'inject' && s.tabBtnTextActive]}>Inject Value</Text>
       </TouchableOpacity>
     </View>
   );
@@ -463,8 +463,19 @@ function DerivedAlarmCard({ alarm }: { alarm: DerivedAlarm }) {
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-export default function PumpRoom() {
+type PumpRoomProps = {
+  embedded?: boolean;
+  contentOnly?: boolean;
+  fixedTab?: ActiveTab;
+};
+
+export default function PumpRoom({
+  contentOnly = false,
+  embedded = false,
+  fixedTab,
+}: PumpRoomProps = {}) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('plc');
+  const selectedTab = fixedTab ?? activeTab;
 
   const { publishTopic, recordLatencySample, status } = useMqtt();
   const recordLatencySampleRef = useRef(recordLatencySample);
@@ -1008,87 +1019,104 @@ export default function PumpRoom() {
     return null;
   }, [injectFlash, isSimulation, lastCommandError, latestPendingToPlcCommand]);
 
-  return (
-    <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
-      <Header />
-      <TabBar active={activeTab} onChange={setActiveTab} />
+  const panelContent = (
+    <>
+      {selectedTab === 'plc' ? (
+        <>
+          <GatewayWordDisplay doWord={doWord} simulation={isSimulation} />
 
-      <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
+          {fromPlcStatusHint ? <Text style={s.statusHint}>{fromPlcStatusHint}</Text> : null}
 
-        {activeTab === 'plc' ? (
-          <>
-            <GatewayWordDisplay doWord={doWord} simulation={isSimulation} />
-
-            {fromPlcStatusHint ? <Text style={s.statusHint}>{fromPlcStatusHint}</Text> : null}
-
-            {/* DO status — received & read-only when connected; tap-to-toggle in simulation */}
-            <View style={s.sectionBlock}>
-              <View style={s.sectionHeader}>
-                <View style={s.sectionLabelRow}>
-                  <View style={[s.sectionDot, { backgroundColor: AppColors.primary }]} />
-                  <Text style={s.sectionTitle}>Digital Output</Text>
-                </View>
-                <Text style={[s.sectionBadge, s.sectionBadgeDo]}>
-                  {isSimulation ? 'Simulasi · tekan ON/OFF' : 'Status · read-only'}
-                </Text>
+          {/* DO status — received & read-only when connected; tap-to-toggle in simulation */}
+          <View style={s.sectionBlock}>
+            <View style={s.sectionHeader}>
+              <View style={s.sectionLabelRow}>
+                <View style={[s.sectionDot, { backgroundColor: AppColors.primary }]} />
+                <Text style={s.sectionTitle}>Digital Output</Text>
               </View>
-              <View style={s.doGrid}>
-                {DO_CHANNELS.map((ch) => (
-                  <DoStatusCard
-                    key={ch.key}
-                    ch={ch}
-                    value={doState[ch.key]}
-                    channelNumber={DO_BIT_MAP[ch.key].bitIndex}
-                    simulation={isSimulation}
-                    onToggle={() => toggleDoChannel(ch.key)}
-                  />
-                ))}
-              </View>
+              <Text style={[s.sectionBadge, s.sectionBadgeDo]}>
+                {isSimulation ? 'Simulasi · tekan ON/OFF' : 'Status · read-only'}
+              </Text>
             </View>
-          </>
-        ) : (
-          <>
-            {injectStatusHint ? <Text style={s.statusHint}>{injectStatusHint}</Text> : null}
-
-            <ToPlcWordDisplay
-              pt1Counter={pt1Counter}
-              pt2Counter={pt2Counter}
-              pumpActivation={remoteActivationValue}
-              fgsConfirmed={fgsConfirmedValue}
-              packed={toPlcPacked}
-            />
-            {/* Remote Activation / Reset — W2 command edge */}
-            <PumpActivationButton
-              simulation={isSimulation}
-              disabled={isPumpActivationPending}
-              nextValue={nextPumpActivationValue}
-              onPress={triggerPumpActivation}
-            />
-
-            {/* PT-001 / PT-002 inject in bar (W0 / W1) */}
-            <View style={stationStyles.sectionCard}>
-              {PUMP_ROOM_PLC_FIELDS.map((field) => (
-                <PressureButtonGrid
-                  key={field.key}
-                  label={field.label}
-                  value={injectDraft[field.key]}
-                  disabled={getPressurePending(field.key)}
-                  onChange={(v) => updatePressureField(field.key, v)}
+            <View style={s.doGrid}>
+              {DO_CHANNELS.map((ch) => (
+                <DoStatusCard
+                  key={ch.key}
+                  ch={ch}
+                  value={doState[ch.key]}
+                  channelNumber={DO_BIT_MAP[ch.key].bitIndex}
+                  simulation={isSimulation}
+                  onToggle={() => toggleDoChannel(ch.key)}
                 />
               ))}
             </View>
+          </View>
+        </>
+      ) : (
+        <>
+          {injectStatusHint ? <Text style={s.statusHint}>{injectStatusHint}</Text> : null}
 
-            
+          <ToPlcWordDisplay
+            pt1Counter={pt1Counter}
+            pt2Counter={pt2Counter}
+            pumpActivation={remoteActivationValue}
+            fgsConfirmed={fgsConfirmedValue}
+            packed={toPlcPacked}
+          />
+          {/* Remote Activation / Reset — W2 command edge */}
+          <PumpActivationButton
+            simulation={isSimulation}
+            disabled={isPumpActivationPending}
+            nextValue={nextPumpActivationValue}
+            onPress={triggerPumpActivation}
+          />
 
-            {/* Derived alarm */}
-            <View style={stationStyles.summaryCard}>
-              <DerivedAlarmCard alarm={derivedAlarm} />
-            </View>
-          </>
-        )}
+          {/* PT-001 / PT-002 inject in bar (W0 / W1) */}
+          <View style={stationStyles.sectionCard}>
+            {PUMP_ROOM_PLC_FIELDS.map((field) => (
+              <PressureButtonGrid
+                key={field.key}
+                label={field.label}
+                value={injectDraft[field.key]}
+                disabled={getPressurePending(field.key)}
+                onChange={(v) => updatePressureField(field.key, v)}
+              />
+            ))}
+          </View>
+
+          {/* Derived alarm */}
+          {/* <View style={stationStyles.summaryCard}>
+            <DerivedAlarmCard alarm={derivedAlarm} />
+          </View> */}
+        </>
+      )}
+    </>
+  );
+
+  if (contentOnly) {
+    return panelContent;
+  }
+
+  const content = (
+    <>
+      {!embedded ? <Header /> : null}
+      {!fixedTab ? <TabBar active={activeTab} onChange={setActiveTab} /> : null}
+
+      <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
+        {panelContent}
 
         <View style={s.bottomSpacer} />
       </ScrollView>
+    </>
+  );
+
+  if (embedded) {
+    return <View style={s.safeArea}>{content}</View>;
+  }
+
+  return (
+    <SafeAreaView style={s.safeArea} edges={['top', 'left', 'right']}>
+      {content}
     </SafeAreaView>
   );
 }

@@ -1,4 +1,4 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -50,12 +50,8 @@ export default function ExploreScreen() {
   const inactiveRooms = MONITORED_ROOMS.length - activeRooms;
 
   const getRoomMetricValue = (roomId: (typeof MONITORED_ROOMS)[number]['id']) => {
-    if (roomId === 'pump-room') {
-      return pumpInputs.pressurePump1;
-    }
-
-    if (roomId === 'accommodation-room') {
-      return accommodationInputs.temperatureValue;
+    if (roomId === 'engine-room') {
+      return `${pumpInputs.pressurePump1} / ${accommodationInputs.temperatureValue}`;
     }
 
     return 'Standby';
@@ -121,7 +117,7 @@ export default function ExploreScreen() {
             activeOpacity={room.active ? 0.9 : 1}
             disabled={!room.active}
             style={[styles.roomCard, !room.active && styles.roomCardInactive]}
-            onPress={() => router.push(room.route)}>
+            onPress={() => router.push(room.route as Href)}>
             <View style={styles.roomTopRow}>
               <View style={styles.roomIconWrap}>
                 <MaterialCommunityIcons name={room.icon as any} size={20} color={AppColors.primary} />

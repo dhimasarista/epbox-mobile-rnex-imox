@@ -214,7 +214,7 @@ function getMqttLinkMeta(
   };
 }
 
-function AccommodationRoomHeader() {
+function InjectValueHeader() {
   const router = useRouter();
 
   return (
@@ -222,13 +222,13 @@ function AccommodationRoomHeader() {
       <TouchableOpacity style={styles.backBtn} onPress={() => router.navigate('/explore')}>
         <Feather name="arrow-left" size={24} color={AppColors.text} />
       </TouchableOpacity>
-      <Text style={styles.headerLabel}>Accommodation Room</Text>
+      <Text style={styles.headerLabel}>Inject Value</Text>
       <View style={styles.headerGhost} />
     </View>
   );
 }
 
-function AccommodationRoomHero({
+function InjectValueHero({
   syncLabel,
   syncHint,
   isPending,
@@ -854,7 +854,15 @@ function AccommodationSourceSection({
   );
 }
 
-export default function AccommodationRoom() {
+type InjectValueProps = {
+  contentOnly?: boolean;
+  embedded?: boolean;
+};
+
+export default function InjectValue({
+  contentOnly = false,
+  embedded = false,
+}: InjectValueProps = {}) {
   const { latestLatencySample, publishTopic, recordLatencySample, status } = useMqtt();
   const recordLatencySampleRef = useRef(recordLatencySample);
   recordLatencySampleRef.current = recordLatencySample;
@@ -1637,49 +1645,69 @@ export default function AccommodationRoom() {
     return 'ResetOn/Off and Alarm ON/OFF may need a fresh edge; Reset and Acknowledge retry safely.';
   }, [isAnyAlarmWriteWindowActive]);
 
-  return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <AccommodationRoomHeader />
+  const panelContent = (
+    <>
+      <InjectValueHero
+        syncLabel={heroSyncLabel}
+        syncHint={heroSyncHint}
+        isPending={isAnyPending}
+        isCooldownSimEnabled={isCooldownSimEnabled}
+        onToggleCooldownSim={() => setIsCooldownSimEnabled((current) => !current)}
+      />
+      <AccommodationSourceSection
+        confirmedForm={confirmedForm}
+        draftForm={draftForm}
+        heatingState={zoneHeatingState}
+        temperatureHint={temperatureHint}
+        isTemperaturePending={isTemperaturePending}
+        isSmokeDensityPending={isSmokeDensityPending}
+        onTemperatureChange={handleTemperatureChange}
+        onSmokeDensityChange={handleSmokeDensityChange}
+      />
+      <AccommodationAlarmSection
+        alarmStatusLabel={alarmState.alarmStatusLabel}
+        alarmStatusCode={alarmState.alarmStatusCode}
+        sirenOn={alarmState.sirenOn}
+        outputs={alarmState.outputs}
+        hint={alarmHint}
+        commandHint={alarmCommandHint}
+        behaviorHint={alarmBehaviorHint}
+        isConnected={status === 'connected'}
+        isCommandLocked={isAlarmCommandLocked}
+        getCommandCountdown={getAlarmCommandCountdown}
+        isPending={isAlarmPending}
+        mqttLinkLabel={mqttLinkMeta.label}
+        mqttLinkDetail={mqttLinkMeta.detail}
+        mqttLinkTone={mqttLinkMeta.tone}
+        writeWindowLabel={writeWindowLabel}
+        writeWindowDetail={writeWindowDetail}
+        onCommandPress={sendAlarmCommand}
+      />
+    </>
+  );
+
+  if (contentOnly) {
+    return panelContent;
+  }
+
+  const content = (
+    <>
+      {!embedded ? <InjectValueHeader /> : null}
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <AccommodationRoomHero
-          syncLabel={heroSyncLabel}
-          syncHint={heroSyncHint}
-          isPending={isAnyPending}
-          isCooldownSimEnabled={isCooldownSimEnabled}
-          onToggleCooldownSim={() => setIsCooldownSimEnabled((current) => !current)}
-        />
-        <AccommodationSourceSection
-          confirmedForm={confirmedForm}
-          draftForm={draftForm}
-          heatingState={zoneHeatingState}
-          temperatureHint={temperatureHint}
-          isTemperaturePending={isTemperaturePending}
-          isSmokeDensityPending={isSmokeDensityPending}
-          onTemperatureChange={handleTemperatureChange}
-          onSmokeDensityChange={handleSmokeDensityChange}
-        />
-        <AccommodationAlarmSection
-          alarmStatusLabel={alarmState.alarmStatusLabel}
-          alarmStatusCode={alarmState.alarmStatusCode}
-          sirenOn={alarmState.sirenOn}
-          outputs={alarmState.outputs}
-          hint={alarmHint}
-          commandHint={alarmCommandHint}
-          behaviorHint={alarmBehaviorHint}
-          isConnected={status === 'connected'}
-          isCommandLocked={isAlarmCommandLocked}
-          getCommandCountdown={getAlarmCommandCountdown}
-          isPending={isAlarmPending}
-          mqttLinkLabel={mqttLinkMeta.label}
-          mqttLinkDetail={mqttLinkMeta.detail}
-          mqttLinkTone={mqttLinkMeta.tone}
-          writeWindowLabel={writeWindowLabel}
-          writeWindowDetail={writeWindowDetail}
-          onCommandPress={sendAlarmCommand}
-        />
+        {panelContent}
         <View style={styles.bottomSpacer} />
       </ScrollView>
+    </>
+  );
+
+  if (embedded) {
+    return <View style={styles.safeArea}>{content}</View>;
+  }
+
+  return (
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      {content}
     </SafeAreaView>
   );
 }
