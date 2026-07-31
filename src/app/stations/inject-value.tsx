@@ -918,6 +918,8 @@ export default function InjectValue({
   useAutoFgsConfirmed({
     enabled: status === 'connected',
     alarmStatusCode: alarmState.alarmStatusCode,
+    temperatureC: confirmedTemperatureC,
+    smokeDensityPpm: confirmedSmokeDensityPpm,
     metricsPayload: metricsTopic.payload,
     publishTopic,
   });
