@@ -34,7 +34,7 @@ import {
   getAccommodationRoomZoneHeatingState,
   type AccommodationRoomZoneHeatingState,
 } from '@/lib/mqtt-topics';
-import { useMqtt, useMqttTopic, type MqttConnectionState } from '@/providers/mqtt-provider';
+import { useMqtt, useMqttTopic } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { getSignalPalette, styles, type SignalTone } from '@/styles/screens/station.styles';
 
@@ -449,6 +449,19 @@ function AccommodationSmokeDensityField({
   );
 }
 
+export function computeFgsWord(temperatureC: number, smokePpm: number): number {
+  const dangerBit: 0 | 1 =
+    temperatureC >= ACCOMMODATION_TEMP_ALERT_C ||
+    smokePpm >= ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM
+      ? 1 : 0;
+  const warningBit: 0 | 1 =
+    dangerBit === 0 && (
+      temperatureC >= ACCOMMODATION_TEMP_WARNING_C ||
+      smokePpm >= ACCOMMODATION_SMOKE_DENSITY_WARNING_PPM
+    ) ? 1 : 0;
+  return (warningBit << 1) | dangerBit;
+}
+
 function FgsCalcDisplay({
   temperatureC,
   smokePpm,
@@ -456,15 +469,9 @@ function FgsCalcDisplay({
   temperatureC: number;
   smokePpm: number;
 }) {
-  const dangerBit: 0 | 1 =
-    temperatureC >= ACCOMMODATION_TEMP_ALERT_C ||
-    smokePpm >= ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM
-      ? 1 : 0;
-  const warningBit: 0 | 1 =
-    temperatureC >= ACCOMMODATION_TEMP_WARNING_C ||
-    smokePpm >= ACCOMMODATION_SMOKE_DENSITY_WARNING_PPM
-      ? 1 : 0;
-  const word = (warningBit << 1) | dangerBit;
+  const word = computeFgsWord(temperatureC, smokePpm);
+  const dangerBit = word & 1;
+  const warningBit = (word >> 1) & 1;
   const dangerPalette = getSignalPalette(dangerBit ? 'danger' : 'normal');
   const warningPalette = getSignalPalette(warningBit ? 'warning' : 'normal');
 
@@ -543,11 +550,13 @@ function AccommodationSourceSection({
 type InjectValueProps = {
   contentOnly?: boolean;
   embedded?: boolean;
+  onFgsWordChange?: (word: number) => void;
 };
 
 export default function InjectValue({
   contentOnly = false,
   embedded = false,
+  onFgsWordChange,
 }: InjectValueProps = {}) {
   const { publishTopic, recordLatencySample, status } = useMqtt();
   const recordLatencySampleRef = useRef(recordLatencySample);
@@ -581,10 +590,19 @@ export default function InjectValue({
   const statusRef = useRef(status);
   statusRef.current = status;
 
+  const onFgsWordChangeRef = useRef(onFgsWordChange);
+  onFgsWordChangeRef.current = onFgsWordChange;
+
   const metricsState = useMemo(
     () => (metricsTopic.payload ? getAccommodationRoomMetricsState(metricsTopic.payload) : null),
     [metricsTopic.payload]
   );
+
+  useEffect(() => {
+    const tempC = parseAccommodationTemperature(draftForm.temperatureValue);
+    const smokePpm = parseAccommodationSmokeDensity(draftForm.smokeDensityValue);
+    onFgsWordChangeRef.current?.(computeFgsWord(tempC, smokePpm));
+  }, [draftForm]);
 
   useEffect(() => {
     if (!metricsState) {
@@ -1137,10 +1155,10 @@ export default function InjectValue({
         onTemperatureChange={handleTemperatureChange}
         onSmokeDensityChange={handleSmokeDensityChange}
       />
-      <FgsCalcDisplay
+      {/* <FgsCalcDisplay
         temperatureC={parseAccommodationTemperature(draftForm.temperatureValue)}
         smokePpm={parseAccommodationSmokeDensity(draftForm.smokeDensityValue)}
-      />
+      /> */}
     </>
   );
 

@@ -1,13 +1,13 @@
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import InjectValueRoom from './inject-value';
-import PumpRoom from './pump-room';
 import { AppColors } from '@/styles';
 import { styles } from '@/styles/screens/engine-room.styles';
+import InjectValueRoom from './inject-value';
+import PumpRoom from './pump-room';
 
 type EngineRoomTab = 'plc' | 'inject';
 
@@ -23,6 +23,8 @@ const ENGINE_ROOM_TABS = [
 export default function EngineRoom() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<EngineRoomTab>('plc');
+  const [simFgsConfirmed, setSimFgsConfirmed] = useState(0);
+  const handleFgsWordChange = useCallback((word: number) => setSimFgsConfirmed(word), []);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -32,7 +34,7 @@ export default function EngineRoom() {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.headerLabel}>Engine Room</Text>
-          <Text style={styles.headerSubLabel}>PLC status and inject controls</Text>
+          <Text style={styles.headerSubLabel}>PLC Status and Inject Controls</Text>
         </View>
         <View style={styles.headerBadge}>
           <MaterialCommunityIcons name="engine-outline" size={20} color={AppColors.primary} />
@@ -69,8 +71,8 @@ export default function EngineRoom() {
           <PumpRoom contentOnly fixedTab="plc" />
         ) : (
           <>
-            <PumpRoom contentOnly fixedTab="inject" />
-            <InjectValueRoom contentOnly />
+            <PumpRoom contentOnly fixedTab="inject" simFgsConfirmed={simFgsConfirmed} />
+            <InjectValueRoom contentOnly onFgsWordChange={handleFgsWordChange} />
           </>
         )}
         <View style={styles.bottomSpacer} />

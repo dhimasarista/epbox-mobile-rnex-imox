@@ -41,11 +41,13 @@ export function useAutoFgsConfirmed({
       (temperatureC !== null && temperatureC >= FGS_TEMPERATURE_ALERT_C) ||
       (smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_ALERT_PPM)
         ? 1 : 0;
+    // Warning only activates when danger is NOT active (mutually exclusive).
     const warningBit: 0 | 1 =
-      (temperatureC !== null && temperatureC >= FGS_TEMPERATURE_WARNING_C) ||
-      (smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_WARNING_PPM)
-        ? 1 : 0;
-    // Pack: bit 1 = warning, bit 0 = danger. Possible values: 0, 2, 3.
+      dangerBit === 0 && (
+        (temperatureC !== null && temperatureC >= FGS_TEMPERATURE_WARNING_C) ||
+        (smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_WARNING_PPM)
+      ) ? 1 : 0;
+    // Pack: bit 1 = warning, bit 0 = danger. Possible values: 0 (normal), 1 (danger), 2 (warning).
     const desiredFgsWord = (warningBit << 1) | dangerBit;
 
     if (!enabled || !metricsPayload) {

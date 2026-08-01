@@ -18,7 +18,6 @@ import {
 import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
-  getAccommodationRoomMetricsState,
   getCarloGavazziCounterNumericValue,
   packToPlcCommand,
   pressureBarToCounter,
@@ -60,10 +59,6 @@ function getToPlcCommandId(kind: ToPlcPendingKind) {
   return `to-plc:${kind}`;
 }
 
-// Remote Activation is blocked when the accommodation zone is already at threshold
-// or alarm is active — manual W2 should not fire while auto-systems are engaged.
-const ZONE_TEMP_BLOCK_C = 40;
-const ZONE_SMOKE_BLOCK_PPM = 5;
 
 function isPressureCommand(
   command: PendingCommandState<ToPlcCommandSnapshot>
@@ -493,12 +488,14 @@ type PumpRoomProps = {
   embedded?: boolean;
   contentOnly?: boolean;
   fixedTab?: ActiveTab;
+  simFgsConfirmed?: number;
 };
 
 export default function PumpRoom({
   contentOnly = false,
   embedded = false,
   fixedTab,
+  simFgsConfirmed,
 }: PumpRoomProps = {}) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('plc');
   const selectedTab = fixedTab ?? activeTab;
@@ -509,19 +506,6 @@ export default function PumpRoom({
   const metricsTopic = useMqttTopic('gatewayMetrics');
   const metricsReceivedAt = metricsTopic.message?.receivedAt ?? null;
 
-  const zoneBlockReason = useMemo(() => {
-    const payload = metricsTopic.payload;
-    if (!payload) return null;
-
-    const accMetrics = getAccommodationRoomMetricsState(payload);
-
-    const tempC = accMetrics.temperatureNumber !== null ? Math.round(accMetrics.temperatureNumber) : null;
-    const smokePpm = accMetrics.smokeDensityNumber !== null ? Math.round(accMetrics.smokeDensityNumber) : null;
-
-    if (tempC !== null && tempC >= ZONE_TEMP_BLOCK_C) return `Zone temp ${tempC}°C at threshold`;
-    if (smokePpm !== null && smokePpm >= ZONE_SMOKE_BLOCK_PPM) return `Smoke ${smokePpm} ppm at threshold`;
-    return null;
-  }, [metricsTopic.payload]);
   const [lastCommandError, setLastCommandError] = useState<string | null>(null);
   const {
     commands: pendingToPlcCommandMap,
@@ -573,10 +557,15 @@ export default function PumpRoom({
   const [fgsConfirmedValue, setFgsConfirmedValue] = useState(0);
   const [nextPumpActivationValue, setNextPumpActivationValue] = useState<0 | 1>(1);
 
+  // When offline and a simFgsConfirmed prop is provided (from engine-room slider state), prefer it.
+  const effectiveFgsConfirmed = isSimulation && simFgsConfirmed !== undefined
+    ? simFgsConfirmed
+    : fgsConfirmedValue;
+
   // W[2] is held only after MQTT feedback confirms the remote activation/reset command.
   const pt1Counter = pressureBarToCounter(parsePressureBar(injectDraft.pressurePump1));
   const pt2Counter = pressureBarToCounter(parsePressureBar(injectDraft.pressurePump2));
-  const toPlcPacked = packInputs(injectDraft, remoteActivationValue, fgsConfirmedValue);
+  const toPlcPacked = packInputs(injectDraft, remoteActivationValue, effectiveFgsConfirmed);
 
   const flashInject = useCallback((message: string) => {
     setInjectFlash(message);
@@ -1093,13 +1082,13 @@ export default function PumpRoom({
         </>
       ) : (
         <>
-          {injectStatusHint ? <Text style={s.statusHint}>{injectStatusHint}</Text> : null}
+          {/* {injectStatusHint ? <Text style={s.statusHint}>{injectStatusHint}</Text> : null} */}
 
           <ToPlcWordDisplay
             pt1Counter={pt1Counter}
             pt2Counter={pt2Counter}
             pumpActivation={remoteActivationValue}
-            fgsConfirmed={fgsConfirmedValue}
+            fgsConfirmed={effectiveFgsConfirmed}
             packed={toPlcPacked}
           />
           {/* Remote Activation / Reset — W2 command edge */}
@@ -1107,7 +1096,6 @@ export default function PumpRoom({
             simulation={isSimulation}
             disabled={isPumpActivationPending}
             nextValue={nextPumpActivationValue}
-            blockReason={zoneBlockReason}
             onPress={triggerPumpActivation}
           />
 
