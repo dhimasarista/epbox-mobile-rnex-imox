@@ -73,8 +73,9 @@ export function useCounterSliderControl({
   const sendSetValue = useCallback(
     async (nextValue: number, snapshot: CounterCommandSnapshot) => {
       if (status !== 'connected') {
-        rollback({ snapshot });
-        onErrorRef.current?.(`MQTT disconnected. ${label} not sent.`);
+        // Offline: commit locally so the slider stays at the new position.
+        setDraftValue(nextValue);
+        setConfirmedValue(nextValue);
         return;
       }
 

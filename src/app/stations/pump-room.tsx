@@ -18,7 +18,6 @@ import {
 import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
-  getAccommodationRoomAlarmState,
   getAccommodationRoomMetricsState,
   getCarloGavazziCounterNumericValue,
   packToPlcCommand,
@@ -323,12 +322,12 @@ function ToPlcWordDisplay({
   fgsConfirmed: number;
   packed: number;
 }) {
-  // Show every one of the 4 words so the packed uint64 is fully transparent.
-  const words = [
+  const fgsBit0 = fgsConfirmed & 1;
+  const fgsBit1 = (fgsConfirmed >> 1) & 1;
+  const simpleWords = [
     { label: 'W0 · PT1', value: pt1Counter, active: pt1Counter > 0 },
     { label: 'W1 · PT2', value: pt2Counter, active: pt2Counter > 0 },
     { label: 'W2 · Pump Act', value: pumpActivation, active: pumpActivation > 0 },
-    { label: 'W3 · FGS Confirmed', value: fgsConfirmed, active: fgsConfirmed > 0 },
   ];
   return (
     <View style={s.toPlcBlock}>
@@ -337,12 +336,24 @@ function ToPlcWordDisplay({
         <Text style={s.ioCountLabel}>TO_PLC uint64 (to send)</Text>
       </View>
       <View style={s.wordGrid}>
-        {words.map((w) => (
+        {simpleWords.map((w) => (
           <View key={w.label} style={[s.wordCell, w.active && s.wordCellActive]}>
             <Text style={[s.wordValue, w.active && s.wordValueActive]}>{w.value}</Text>
             <Text style={s.wordLabel}>{w.label}</Text>
           </View>
         ))}
+        <View style={[s.wordCell, fgsConfirmed > 0 && s.wordCellActive]}>
+          <Text style={[s.wordValue, fgsConfirmed > 0 && s.wordValueActive]}>{fgsConfirmed}</Text>
+          <Text style={s.wordLabel}>W3 · FGS</Text>
+          <View style={s.fgsBitRow}>
+            <View style={[s.fgsBit, fgsBit0 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, fgsBit0 === 1 && s.fgsBitTextActive]}>0 · Confirmed</Text>
+            </View>
+            <View style={[s.fgsBit, fgsBit1 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, fgsBit1 === 1 && s.fgsBitTextActive]}>1 · Warning</Text>
+            </View>
+          </View>
+        </View>
       </View>
     </View>
   );
@@ -503,14 +514,10 @@ export default function PumpRoom({
     if (!payload) return null;
 
     const accMetrics = getAccommodationRoomMetricsState(payload);
-    const accAlarm = getAccommodationRoomAlarmState(payload);
 
     const tempC = accMetrics.temperatureNumber !== null ? Math.round(accMetrics.temperatureNumber) : null;
     const smokePpm = accMetrics.smokeDensityNumber !== null ? Math.round(accMetrics.smokeDensityNumber) : null;
-    const alarmCode = accAlarm.alarmStatusCode;
-    const isAlarmActive = alarmCode !== null && alarmCode !== 1;
 
-    if (isAlarmActive) return 'Accommodation alarm active';
     if (tempC !== null && tempC >= ZONE_TEMP_BLOCK_C) return `Zone temp ${tempC}°C at threshold`;
     if (smokePpm !== null && smokePpm >= ZONE_SMOKE_BLOCK_PPM) return `Smoke ${smokePpm} ppm at threshold`;
     return null;
@@ -563,7 +570,7 @@ export default function PumpRoom({
   const commandErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [remoteActivationValue, setRemoteActivationValue] = useState<0 | 1>(0);
-  const [fgsConfirmedValue, setFgsConfirmedValue] = useState<0 | 1>(0);
+  const [fgsConfirmedValue, setFgsConfirmedValue] = useState(0);
   const [nextPumpActivationValue, setNextPumpActivationValue] = useState<0 | 1>(1);
 
   // W[2] is held only after MQTT feedback confirms the remote activation/reset command.
@@ -676,8 +683,7 @@ export default function PumpRoom({
     const gatewayWords = unpackToPlcCommand(roundedToPlcValue);
     const gatewayRemoteActivationValue: 0 | 1 =
       Math.round(gatewayWords.pumpActivation) >= 1 ? 1 : 0;
-    const gatewayFgsConfirmedValue: 0 | 1 =
-      Math.round(gatewayWords.fgsConfirmed) >= 1 ? 1 : 0;
+    const gatewayFgsConfirmedValue = Math.round(gatewayWords.fgsConfirmed);
     const ackedCommands = Object.values(pendingToPlcCommandMap).filter((command) => {
       const isFresh =
         command.snapshot.baselineReceivedAt === null
@@ -1295,6 +1301,12 @@ const s = StyleSheet.create({
   pumpActBtnDisabled: { opacity: 0.55 },
   pumpActBtnText: { fontSize: 14, fontWeight: '800', color: AppColors.textInverse, letterSpacing: 0.3 },
   pumpActBlockReason: { marginTop: 6, fontSize: 11, fontWeight: '500', color: AppColors.warning, textAlign: 'center' },
+
+  fgsBitRow: { marginTop: 4, gap: 3, width: '100%' },
+  fgsBit: { paddingHorizontal: 4, paddingVertical: 2, borderRadius: 3, backgroundColor: AppColors.border },
+  fgsBitActive: { backgroundColor: AppColors.primary },
+  fgsBitText: { fontSize: 9, fontWeight: '600', color: AppColors.textSubtle, textAlign: 'center' },
+  fgsBitTextActive: { color: AppColors.textInverse },
 
   derivedAlarmCard: {
     flexDirection: 'row',

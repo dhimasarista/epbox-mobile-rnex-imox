@@ -28,15 +28,11 @@ import {
   type AccommodationRoomInputs,
 } from '@/lib/accommodation-room-demo';
 import {
-  ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS,
-  buildCarloGavazziAlarmCommand,
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
-  getAccommodationRoomAlarmState,
   getAccommodationRoomMetricsState,
   getAccommodationRoomZoneHeatingState,
   type AccommodationRoomZoneHeatingState,
-  type CarloGavazziAlarmCommandName,
 } from '@/lib/mqtt-topics';
 import { useMqtt, useMqttTopic, type MqttConnectionState } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
@@ -60,31 +56,15 @@ type CounterCommandSnapshot = {
   previousConfirmedValue: AccommodationEditableValue;
   previousDraftValue: AccommodationEditableValue;
 };
-type AlarmCommandSnapshot = {
-  kind: 'alarm';
-  command: CarloGavazziAlarmCommandName;
-  baselineReceivedAt: number | null;
-};
-type AccommodationCommandSnapshot = CounterCommandSnapshot | AlarmCommandSnapshot;
 
 function getCounterCommandId(field: AccommodationEditableKey) {
   return `counter:${field}`;
 }
 
-function getAlarmCommandId(command: CarloGavazziAlarmCommandName) {
-  return `alarm:${command}`;
-}
-
 function isCounterCommand(
-  command: PendingCommandState<AccommodationCommandSnapshot>
+  command: PendingCommandState<CounterCommandSnapshot>
 ): command is PendingCommandState<CounterCommandSnapshot> {
   return command.snapshot.kind === 'counter';
-}
-
-function isAlarmCommand(
-  command: PendingCommandState<AccommodationCommandSnapshot>
-): command is PendingCommandState<AlarmCommandSnapshot> {
-  return command.snapshot.kind === 'alarm';
 }
 
 function getAccommodationFieldValue(
@@ -126,21 +106,6 @@ function getAccommodationTemperatureLabel(
   return 'Normal Range';
 }
 
-function getAccommodationAlarmTone(
-  alarmStatusCode: number | null,
-  sirenOn: boolean | null
-): SignalTone {
-  if (sirenOn || alarmStatusCode === 2 || alarmStatusCode === 4) {
-    return 'danger';
-  }
-
-  if (alarmStatusCode === 3 || alarmStatusCode === 5 || alarmStatusCode === 6) {
-    return 'warning';
-  }
-
-  return 'normal';
-}
-
 function formatEventTime(timestamp: number | null) {
   if (!timestamp) {
     return 'No metrics yet';
@@ -162,58 +127,6 @@ function formatZoneTemperatureMetric(value: number | null, unit: string) {
   const normalizedValue = Number.isInteger(value) ? `${value}` : value.toFixed(1);
 
   return unit ? `${normalizedValue} ${unit}` : normalizedValue;
-}
-
-function getMqttLinkMeta(
-  connectionState: MqttConnectionState,
-  latestRoundtripMs: number | null,
-  isPending: boolean
-) {
-  if (connectionState !== 'connected') {
-    return {
-      label: 'Offline',
-      detail: 'No broker session',
-      tone: 'danger' as const,
-    };
-  }
-
-  if (isPending) {
-    return {
-      label: 'Waiting Ack',
-      detail: 'Awaiting metrics',
-      tone: 'warning' as const,
-    };
-  }
-
-  if (latestRoundtripMs === null) {
-    return {
-      label: 'Ready',
-      detail: 'No RTT sample yet',
-      tone: 'normal' as const,
-    };
-  }
-
-  if (latestRoundtripMs >= 2500) {
-    return {
-      label: 'Slow',
-      detail: `${latestRoundtripMs} ms`,
-      tone: 'danger' as const,
-    };
-  }
-
-  if (latestRoundtripMs >= 1000) {
-    return {
-      label: 'Busy',
-      detail: `${latestRoundtripMs} ms`,
-      tone: 'warning' as const,
-    };
-  }
-
-  return {
-    label: 'Fast',
-    detail: `${latestRoundtripMs} ms`,
-    tone: 'normal' as const,
-  };
 }
 
 function InjectValueHeader() {
@@ -345,7 +258,7 @@ function AccommodationTemperatureField({
       <View style={styles.dashboardControlCard}>
         <View style={styles.dashboardControlHeader}>
           <Text style={styles.fieldLabel}>Zone Temperature</Text>
-          
+
           <View style={{
             flexDirection: 'row',
             justifyContent: 'space-evenly',
@@ -452,31 +365,8 @@ function AccommodationTemperatureField({
 
         <View style={styles.sliderRangeRow}>
           <Text style={styles.sliderRangeText}>0 C</Text>
-          {/* <View
-            style={[
-              styles.signalStateBadge,
-              isAntifreezeActive
-                ? {
-                    backgroundColor: '#DBEAFE',
-                    borderColor: '#93C5FD',
-                  }
-                : {
-                    backgroundColor: signalPalette.surface,
-                    borderColor: signalPalette.border,
-                  },
-            ]}>
-            <Text
-              style={[
-                styles.signalStateText,
-                { color: isAntifreezeActive ? AppColors.info : signalPalette.text },
-              ]}>
-              {getAccommodationTemperatureLabel(signalTone, heatingState.heatingStatusValue)}
-            </Text>
-          </View> */}
           <Text style={styles.sliderRangeText}>{ACCOMMODATION_TEMP_MAX_C} C</Text>
         </View>
-
-        {/* <Text style={styles.dashboardControlHint}>{hint}</Text> */}
       </View>
     </View>
   );
@@ -494,9 +384,6 @@ function getAccommodationSmokeDensityTone(value: number): SignalTone {
   return 'normal';
 }
 
-// Smoke density mirrors the temperature control (counter, 0–15 ppm). The MQTT
-// device id is wired later; until then this stays a local slider (see the null
-// counterIds.smokeDensity guard in the change handler).
 function AccommodationSmokeDensityField({
   confirmedValue,
   draftValue,
@@ -562,229 +449,56 @@ function AccommodationSmokeDensityField({
   );
 }
 
-function AlarmCommandButton({
-  label,
-  tone,
-  disabled,
-  onPress,
+function FgsCalcDisplay({
+  temperatureC,
+  smokePpm,
 }: {
-  label: string;
-  tone: 'primary' | 'secondary';
-  disabled: boolean;
-  countdownSeconds?: number | null;
-  onPress: () => void;
+  temperatureC: number;
+  smokePpm: number;
 }) {
-  return (
-    <TouchableOpacity
-      activeOpacity={0.9}
-      disabled={disabled}
-      onPress={onPress}
-      style={[
-        styles.alarmCommandButton,
-        tone === 'primary' ? styles.alarmCommandButtonPrimary : styles.alarmCommandButtonSecondary,
-        disabled && styles.alarmCommandButtonDisabled,
-      ]}>
-      <Text
-        style={[
-          styles.alarmCommandButtonText,
-          tone === 'primary'
-            ? styles.alarmCommandButtonTextPrimary
-            : styles.alarmCommandButtonTextSecondary,
-        ]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
-function AccommodationAlarmSection({
-  alarmStatusLabel,
-  alarmStatusCode,
-  sirenOn,
-  outputs,
-  hint,
-  commandHint,
-  behaviorHint,
-  isConnected,
-  isCommandLocked,
-  getCommandCountdown,
-  isPending,
-  mqttLinkLabel,
-  mqttLinkDetail,
-  mqttLinkTone,
-  writeWindowLabel,
-  writeWindowDetail,
-  onCommandPress,
-}: {
-  alarmStatusLabel: string;
-  alarmStatusCode: number | null;
-  sirenOn: boolean | null;
-  outputs: { code: number; label: string; active: boolean }[];
-  hint: string;
-  commandHint: string;
-  behaviorHint: string;
-  isConnected: boolean;
-  isCommandLocked: (command: CarloGavazziAlarmCommandName) => boolean;
-  getCommandCountdown: (command: CarloGavazziAlarmCommandName) => number | null;
-  isPending: boolean;
-  mqttLinkLabel: string;
-  mqttLinkDetail: string;
-  mqttLinkTone: SignalTone;
-  writeWindowLabel: string;
-  writeWindowDetail: string;
-  onCommandPress: (command: CarloGavazziAlarmCommandName, label: string) => void;
-}) {
-  const alarmTone = getAccommodationAlarmTone(alarmStatusCode, sirenOn);
-  const alarmPalette = getSignalPalette(alarmTone);
-  const isAlarmOff = alarmTone === 'normal';
-  const isAlarmOn  = !isAlarmOff;
-  const isSirenOn  = sirenOn === true;
+  const dangerBit: 0 | 1 =
+    temperatureC >= ACCOMMODATION_TEMP_ALERT_C ||
+    smokePpm >= ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM
+      ? 1 : 0;
+  const warningBit: 0 | 1 =
+    temperatureC >= ACCOMMODATION_TEMP_WARNING_C ||
+    smokePpm >= ACCOMMODATION_SMOKE_DENSITY_WARNING_PPM
+      ? 1 : 0;
+  const word = (warningBit << 1) | dangerBit;
+  const dangerPalette = getSignalPalette(dangerBit ? 'danger' : 'normal');
+  const warningPalette = getSignalPalette(warningBit ? 'warning' : 'normal');
 
   return (
     <View style={styles.sectionCard}>
-      <View style={styles.statusSegmentRow}>
-        {/* Off */}
-        <View
-          style={[
-            styles.statusSegmentButton,
-            isAlarmOff && styles.statusSegmentButtonActive,
-            isAlarmOff && { backgroundColor: AppColors.surfaceSuccess, borderColor: '#9BD7B6' },
-          ]}>
-          <View style={styles.statusSegmentTopRow}>
-            <View
-              style={[
-                styles.statusSegmentLamp,
-                { backgroundColor: isAlarmOff ? AppColors.success : AppColors.border },
-                isAlarmOff && styles.statusSegmentLampActive,
-              ]}
-            />
-            <Text style={styles.statusSegmentCode}>00</Text>
-          </View>
-          <View style={[styles.statusSegmentCap, isAlarmOff && styles.statusSegmentCapActive]}>
-            <Feather name="check" size={18} color={isAlarmOff ? AppColors.success : AppColors.textSubtle} />
-          </View>
-          <Text style={[styles.statusSegmentText, isAlarmOff && styles.statusSegmentTextActive]}>Off</Text>
-        </View>
-
-        {/* On */}
-        <View
-          style={[
-            styles.statusSegmentButton,
-            isAlarmOn && styles.statusSegmentButtonActive,
-            isAlarmOn && { backgroundColor: AppColors.surfaceError, borderColor: '#F4B7B7' },
-          ]}>
-          <View style={styles.statusSegmentTopRow}>
-            <View
-              style={[
-                styles.statusSegmentLamp,
-                { backgroundColor: isAlarmOn ? AppColors.error : AppColors.border },
-                isAlarmOn && styles.statusSegmentLampActive,
-              ]}
-            />
-            <Text style={styles.statusSegmentCode}>01</Text>
-          </View>
-          <View style={[styles.statusSegmentCap, isAlarmOn && styles.statusSegmentCapActive]}>
-            <Feather name="alert-triangle" size={18} color={isAlarmOn ? AppColors.error : AppColors.textSubtle} />
-          </View>
-          <Text style={[styles.statusSegmentText, isAlarmOn && styles.statusSegmentTextActive]}>
-            {isAlarmOn ? alarmStatusLabel : 'On'}
+      <Text style={[styles.fieldLabel, { marginBottom: 8 }]}>FGS W3 Calculation</Text>
+      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+        <View style={[
+          styles.signalValueChip,
+          { backgroundColor: dangerPalette.surface, borderColor: dangerPalette.border },
+        ]}>
+          <View style={[styles.signalValueDot, { backgroundColor: dangerPalette.accent }]} />
+          <Text style={[styles.signalValueText, { color: dangerPalette.text }]}>
+            b0 · Confirmed: {dangerBit}
           </Text>
         </View>
-
-        {/* Siren */}
-        <View
-          style={[
-            styles.statusSegmentButton,
-            isSirenOn && styles.statusSegmentButtonActive,
-            isSirenOn && { backgroundColor: '#FFF4DB', borderColor: '#F2D17A' },
-          ]}>
-          <View style={styles.statusSegmentTopRow}>
-            <View
-              style={[
-                styles.statusSegmentLamp,
-                { backgroundColor: isSirenOn ? AppColors.warning : AppColors.border },
-                isSirenOn && styles.statusSegmentLampActive,
-              ]}
-            />
-            <Text style={styles.statusSegmentCode}>SRN</Text>
-          </View>
-          <View style={[styles.statusSegmentCap, isSirenOn && styles.statusSegmentCapActive]}>
-            <Feather name="volume-2" size={18} color={isSirenOn ? AppColors.warning : AppColors.textSubtle} />
-          </View>
-          <Text style={[styles.statusSegmentText, isSirenOn && styles.statusSegmentTextActive]}>Siren</Text>
+        <View style={[
+          styles.signalValueChip,
+          { backgroundColor: warningPalette.surface, borderColor: warningPalette.border },
+        ]}>
+          <View style={[styles.signalValueDot, { backgroundColor: warningPalette.accent }]} />
+          <Text style={[styles.signalValueText, { color: warningPalette.text }]}>
+            b1 · Warning: {warningBit}
+          </Text>
+        </View>
+        <View style={[
+          styles.signalValueChip,
+          { backgroundColor: AppColors.surface, borderColor: AppColors.border },
+        ]}>
+          <Text style={[styles.signalValueText, { color: AppColors.text }]}>
+            W3 = {word}
+          </Text>
         </View>
       </View>
-      <View style={styles.alarmOutputList}>
-        {outputs.map((output) => (
-          <View
-            key={`${output.code}-${output.label}`}
-            style={[
-              styles.alarmOutputRow,
-              output.active && styles.alarmOutputRowActive,
-            ]}>
-            <View
-              style={[
-                styles.alarmOutputDot,
-                {
-                  backgroundColor: output.active ? alarmPalette.accent : AppColors.border,
-                },
-              ]}
-            />
-            <Text
-              style={[
-                styles.alarmOutputLabel,
-                output.active && { color: alarmPalette.text },
-              ]}>
-              {output.label}
-            </Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.alarmCommandGrid}>
-        <AlarmCommandButton
-          label="Acknowledge Alarm"
-          tone="primary"
-          disabled={!isConnected || isCommandLocked('Acknowledgement')}
-          countdownSeconds={getCommandCountdown('Acknowledgement')}
-          onPress={() => onCommandPress('Acknowledgement', 'Acknowledge Alarm')}
-        />
-        <AlarmCommandButton
-          label="Reset Alarm"
-          tone="primary"
-          disabled={!isConnected || isCommandLocked('Reset')}
-          countdownSeconds={getCommandCountdown('Reset')}
-          onPress={() => onCommandPress('Reset', 'Reset Alarm')}
-        />
-        <AlarmCommandButton
-          label="Reset ON"
-          tone="secondary"
-          disabled={!isConnected || isCommandLocked('ResetOn')}
-          countdownSeconds={getCommandCountdown('ResetOn')}
-          onPress={() => onCommandPress('ResetOn', 'Reset ON')}
-        />
-        <AlarmCommandButton
-          label="Reset OFF"
-          tone="secondary"
-          disabled={!isConnected || isCommandLocked('ResetOff')}
-          countdownSeconds={getCommandCountdown('ResetOff')}
-          onPress={() => onCommandPress('ResetOff', 'Reset OFF')}
-        />
-        {/* <AlarmCommandButton
-          label="Alarm ON"
-          tone="secondary"
-          disabled={!isConnected || isActionLocked}
-          onPress={() => onCommandPress('TestAlarmOn', 'Alarm ON')}
-        />
-        <AlarmCommandButton
-          label="Alarm OFF"
-          tone="secondary"
-          disabled={!isConnected || isActionLocked}
-          onPress={() => onCommandPress('TestAlarmOff', 'Alarm OFF')}
-        /> */}
-      </View>
-
-      <Text style={styles.dashboardControlHint}>{commandHint}</Text>
     </View>
   );
 }
@@ -835,7 +549,7 @@ export default function InjectValue({
   contentOnly = false,
   embedded = false,
 }: InjectValueProps = {}) {
-  const { latestLatencySample, publishTopic, recordLatencySample, status } = useMqtt();
+  const { publishTopic, recordLatencySample, status } = useMqtt();
   const recordLatencySampleRef = useRef(recordLatencySample);
   recordLatencySampleRef.current = recordLatencySample;
   const metricsTopic = useMqttTopic('gatewayMetrics');
@@ -848,10 +562,7 @@ export default function InjectValue({
     resolveAllCommands,
     resolveCommand,
     startCommand,
-  } = usePendingCommand<AccommodationCommandSnapshot>();
-  const [alarmCountdownNow, setAlarmCountdownNow] = useState(() => Date.now());
-  // When off, the auto temperature / smoke-density cooldown does not run even while
-  // a pump is reported running (toggled from the hero sync badge).
+  } = usePendingCommand<CounterCommandSnapshot>();
   const [isCooldownSimEnabled, setIsCooldownSimEnabled] = useState(true);
   const hasHydratedRef = useRef(false);
   const temperatureDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -874,22 +585,6 @@ export default function InjectValue({
     () => (metricsTopic.payload ? getAccommodationRoomMetricsState(metricsTopic.payload) : null),
     [metricsTopic.payload]
   );
-  const alarmState = useMemo(
-    () =>
-      metricsTopic.payload
-        ? getAccommodationRoomAlarmState(metricsTopic.payload)
-        : {
-            alarmStatusCode: null,
-            alarmStatusLabel: 'OFF',
-            sirenOn: null,
-            lastSignalAt: null,
-            outputs: ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS.map((item) => ({
-              ...item,
-              active: false,
-            })),
-          },
-    [metricsTopic.payload]
-  );
 
   useEffect(() => {
     if (!metricsState) {
@@ -907,9 +602,6 @@ export default function InjectValue({
     };
   }, [metricsState]);
 
-  // Auto cooldown only: while FROM PLC reports a running pump (bit 0 / bit 1),
-  // nudge temperature and smoke density back down until they reach normal.
-  // W2 Remote Activation is manual-only from src/app/stations/pump-room.tsx.
   const confirmedTemperatureC = parseAccommodationTemperature(confirmedForm.temperatureValue);
   const confirmedSmokeDensityPpm = parseAccommodationSmokeDensity(confirmedForm.smokeDensityValue);
   const smokeDensityCounterId =
@@ -1027,9 +719,6 @@ export default function InjectValue({
           },
     [metricsTopic.payload]
   );
-  const pendingCommandEntries = Object.values(pendingCommandMap);
-  const pendingAlarmEntries = pendingCommandEntries.filter(isAlarmCommand);
-  const isAnyAlarmWriteWindowActive = pendingAlarmEntries.length > 0;
 
   const sendSetValueCommand = useCallback(
     async (
@@ -1047,29 +736,23 @@ export default function InjectValue({
           ? CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.temperature
           : CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
 
-      // Smoke density is UI-only until its counter id is wired; callers keep it
-      // local in that case, so reaching here with a null id is unexpected.
       if (counterId === null) {
         return;
       }
 
       if (status !== 'connected') {
-        rollbackCounterCommand({
-          id: commandId,
-          label: requestedLabel,
-          startedAt: Date.now(),
-          expiresAt: Date.now(),
-          snapshot: {
-            kind: 'counter',
-            field,
-            counterId,
-            expectedMetricValue: nextMetricValue,
-            baselineReceivedAt: metricsReceivedAt,
-            previousConfirmedValue: snapshot.previousConfirmedValue,
-            previousDraftValue: snapshot.previousDraftValue,
-          },
-        });
-        showCommandError('MQTT disconnected. Command not sent.');
+        // Offline: commit locally so the slider stays at the new position.
+        if (field === 'temperatureValue') {
+          setConfirmedForm((current) => ({
+            ...current,
+            temperatureValue: formatAccommodationTemperature(nextMetricValue),
+          }));
+        } else {
+          setConfirmedForm((current) => ({
+            ...current,
+            smokeDensityValue: formatAccommodationSmokeDensity(nextMetricValue),
+          }));
+        }
         return;
       }
 
@@ -1133,54 +816,6 @@ export default function InjectValue({
       startCommand,
       status,
     ]
-  );
-
-  const sendAlarmCommand = useCallback(
-    async (command: CarloGavazziAlarmCommandName, requestedLabel: string) => {
-      const commandId = getAlarmCommandId(command);
-
-      if (status !== 'connected') {
-        showCommandError(`Disconnected. Unable to send ${requestedLabel}.`);
-        return;
-      }
-
-      if (isCommandPending(commandId)) {
-        showCommandError(`${requestedLabel} is already waiting for gateway response.`);
-        return;
-      }
-
-      const pendingCommand = startCommand({
-        id: commandId,
-        label: requestedLabel,
-        snapshot: {
-          kind: 'alarm',
-          command,
-          baselineReceivedAt: metricsReceivedAt,
-        },
-        onTimeout: (timedOutCommand) => {
-          showCommandError(`${timedOutCommand.label} timed out. Try again.`);
-        },
-      });
-
-      if (!pendingCommand) {
-        return;
-      }
-
-      try {
-        await publishTopic(
-          'gatewayOtCommand',
-          buildCarloGavazziAlarmCommand(
-            CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.alarm.deviceId,
-            command
-          )
-        );
-        setLastCommandError(null);
-      } catch (error) {
-        resolveCommand(commandId);
-        showCommandError(error instanceof Error ? error.message : `Unable to send ${requestedLabel}.`);
-      }
-    },
-    [isCommandPending, metricsReceivedAt, publishTopic, resolveCommand, showCommandError, startCommand, status]
   );
 
   useEffect(() => {
@@ -1289,6 +924,11 @@ export default function InjectValue({
     });
 
     const processMetricsTimer = setTimeout(() => {
+      // Only sync from MQTT while connected — offline slider values must not be overwritten.
+      if (statusRef.current !== 'connected') {
+        return;
+      }
+
       if (metricsState.temperatureValue !== null || metricsState.smokeDensityValue !== null) {
         setConfirmedForm((current) => {
           const next = { ...current };
@@ -1356,41 +996,19 @@ export default function InjectValue({
     return () => clearTimeout(processMetricsTimer);
   }, [isCommandPending, metricsReceivedAt, metricsState, pendingCommandMap, resolveCommand]);
 
-  useEffect(() => {
-    if (metricsReceivedAt === null) {
-      return;
-    }
-
-    const ackedCommands = Object.values(pendingCommandMap).filter(
-      (command): command is PendingCommandState<AlarmCommandSnapshot> =>
-        isAlarmCommand(command) &&
-        (command.snapshot.baselineReceivedAt === null
-          ? metricsReceivedAt >= command.startedAt
-          : metricsReceivedAt > command.snapshot.baselineReceivedAt)
-    );
-
-    if (ackedCommands.length === 0) {
-      return;
-    }
-
-    const latestAcked = [...ackedCommands].sort((left, right) => left.startedAt - right.startedAt).pop()!;
-    recordLatencySampleRef.current({
-      label: latestAcked.label,
-      requestTopicKey: 'gatewayOtCommand',
-      responseTopicKey: 'gatewayMetrics',
-      startedAt: latestAcked.startedAt,
-      completedAt: metricsReceivedAt,
-    });
-
-    ackedCommands.forEach((command) => {
-      resolveCommand(command.id);
-    });
-    setLastCommandError(null);
-  }, [metricsReceivedAt, pendingCommandMap, resolveCommand]);
-
   const handleTemperatureChange = useCallback(
     (nextValue: string) => {
       const nextTemperature = parseAccommodationTemperature(nextValue);
+      const formatted = formatAccommodationTemperature(nextTemperature);
+
+      setDraftForm((current) => ({ ...current, temperatureValue: formatted }));
+
+      // Offline: commit both draft and confirmed immediately — no debounce, no MQTT.
+      if (statusRef.current !== 'connected') {
+        setConfirmedForm((current) => ({ ...current, temperatureValue: formatted }));
+        temperatureSnapshotRef.current = null;
+        return;
+      }
 
       if (!temperatureSnapshotRef.current) {
         temperatureSnapshotRef.current = {
@@ -1398,11 +1016,6 @@ export default function InjectValue({
           previousDraftValue: getAccommodationFieldValue(draftForm, 'temperatureValue'),
         };
       }
-
-      setDraftForm((current) => ({
-        ...current,
-        temperatureValue: formatAccommodationTemperature(nextTemperature),
-      }));
 
       clearTemperatureDebounce();
       temperatureDebounceRef.current = setTimeout(() => {
@@ -1415,7 +1028,7 @@ export default function InjectValue({
         void sendSetValueCommand(
           'temperatureValue',
           nextTemperature,
-          `Temperature ${formatAccommodationTemperature(nextTemperature)}`,
+          `Temperature ${formatted}`,
           snapshot
         );
       }, COMMAND_DEBOUNCE_MS);
@@ -1426,8 +1039,18 @@ export default function InjectValue({
   const handleSmokeDensityChange = useCallback(
     (nextValue: string) => {
       const nextDensity = parseAccommodationSmokeDensity(nextValue);
+      const formatted = formatAccommodationSmokeDensity(nextDensity);
       const densityCounterId =
         CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
+
+      setDraftForm((current) => ({ ...current, smokeDensityValue: formatted }));
+
+      // Offline: commit both draft and confirmed immediately — no debounce, no MQTT.
+      if (statusRef.current !== 'connected') {
+        setConfirmedForm((current) => ({ ...current, smokeDensityValue: formatted }));
+        smokeDensitySnapshotRef.current = null;
+        return;
+      }
 
       if (!smokeDensitySnapshotRef.current) {
         smokeDensitySnapshotRef.current = {
@@ -1435,11 +1058,6 @@ export default function InjectValue({
           previousDraftValue: getAccommodationFieldValue(draftForm, 'smokeDensityValue'),
         };
       }
-
-      setDraftForm((current) => ({
-        ...current,
-        smokeDensityValue: formatAccommodationSmokeDensity(nextDensity),
-      }));
 
       clearSmokeDensityDebounce();
       smokeDensityDebounceRef.current = setTimeout(() => {
@@ -1449,24 +1067,20 @@ export default function InjectValue({
         };
         smokeDensitySnapshotRef.current = null;
 
-        // No counter id wired yet (or offline) → keep the density value local.
-        if (densityCounterId === null || status !== 'connected') {
-          setConfirmedForm((current) => ({
-            ...current,
-            smokeDensityValue: formatAccommodationSmokeDensity(nextDensity),
-          }));
+        if (densityCounterId === null) {
+          setConfirmedForm((current) => ({ ...current, smokeDensityValue: formatted }));
           return;
         }
 
         void sendSetValueCommand(
           'smokeDensityValue',
           nextDensity,
-          `Smoke Density ${formatAccommodationSmokeDensity(nextDensity)}`,
+          `Smoke Density ${formatted}`,
           snapshot
         );
       }, COMMAND_DEBOUNCE_MS);
     },
-    [clearSmokeDensityDebounce, confirmedForm, draftForm, sendSetValueCommand, status]
+    [clearSmokeDensityDebounce, confirmedForm, draftForm, sendSetValueCommand]
   );
 
   const pendingTemperatureCommand = pendingCommandMap[getCounterCommandId('temperatureValue')] ?? null;
@@ -1474,47 +1088,8 @@ export default function InjectValue({
     pendingCommandMap[getCounterCommandId('smokeDensityValue')] ?? null;
   const isTemperaturePending = pendingTemperatureCommand !== null;
   const isSmokeDensityPending = pendingSmokeDensityCommand !== null;
-  const isAlarmPending = pendingAlarmEntries.length > 0;
-  const isAlarmCommandLocked = useCallback(
-    (command: CarloGavazziAlarmCommandName) => !!pendingCommandMap[getAlarmCommandId(command)],
-    [pendingCommandMap]
-  );
-  const getAlarmCommandCountdown = useCallback(
-    (command: CarloGavazziAlarmCommandName) => {
-      const pending = pendingCommandMap[getAlarmCommandId(command)];
-      if (!pending) {
-        return null;
-      }
-      const remainingMs = pending.expiresAt - alarmCountdownNow;
-      return Math.max(0, Math.ceil(remainingMs / 1000));
-    },
-    [alarmCountdownNow, pendingCommandMap]
-  );
-
-  useEffect(() => {
-    if (!isAlarmPending) {
-      return;
-    }
-
-    setAlarmCountdownNow(Date.now());
-    const intervalId = setInterval(() => setAlarmCountdownNow(Date.now()), 1_000);
-
-    return () => clearInterval(intervalId);
-  }, [isAlarmPending]);
-  const isAnyPending =
-    isTemperaturePending || isSmokeDensityPending || isAlarmPending;
+  const isAnyPending = isTemperaturePending || isSmokeDensityPending;
   const lastMetricsAt = metricsReceivedAt;
-  const lastAlarmMetricsAt = alarmState.lastSignalAt ?? lastMetricsAt;
-  const latestAlarmRoundtripMs =
-    latestLatencySample?.requestTopicKey === 'gatewayOtCommand' &&
-    latestLatencySample.responseTopicKey === 'gatewayMetrics'
-      ? latestLatencySample.durationMs
-      : null;
-  const mqttLinkMeta = getMqttLinkMeta(status, latestAlarmRoundtripMs, isAlarmPending);
-  const writeWindowLabel = isAnyAlarmWriteWindowActive ? 'Sending…' : 'Ready';
-  const writeWindowDetail = isAnyAlarmWriteWindowActive
-    ? 'Auto-clears on reply or after 5s'
-    : 'Ready to send';
 
   const heroSyncLabel = useMemo(() => {
     if (status !== 'connected') {
@@ -1544,49 +1119,6 @@ export default function InjectValue({
     return '00:00:00';
   }, [isAnyPending, lastCommandError, lastMetricsAt, status]);
 
-  const latestPendingAlarmCommand = useMemo(() => {
-    if (pendingAlarmEntries.length === 0) {
-      return null;
-    }
-
-    return [...pendingAlarmEntries].sort((left, right) => left.startedAt - right.startedAt).pop() ?? null;
-  }, [pendingAlarmEntries]);
-
-  const alarmHint = useMemo(() => {
-    if (lastCommandError && latestPendingAlarmCommand) {
-      return lastCommandError;
-    }
-
-    if (latestPendingAlarmCommand) {
-      return `${latestPendingAlarmCommand.label} sent · waiting for gateway.`;
-    }
-
-    if (status !== 'connected') {
-      return 'Alarm command buttons stay disabled until MQTT reconnects.';
-    }
-
-    if (lastAlarmMetricsAt) {
-      return `Alarm and siren outputs last refreshed at ${formatEventTime(lastAlarmMetricsAt)}.`;
-    }
-
-    return 'Waiting for alarm metrics from the gateway.';
-  }, [lastAlarmMetricsAt, lastCommandError, latestPendingAlarmCommand, status]);
-
-  const alarmCommandHint = useMemo(() => {
-    if (latestPendingAlarmCommand) {
-      return `${latestPendingAlarmCommand.snapshot.command} sent · auto-clears on reply or after 5s.`;
-    }
-
-    return 'Reset and Acknowledge are safe to retry.';
-  }, [latestPendingAlarmCommand]);
-  const alarmBehaviorHint = useMemo(() => {
-    if (isAnyAlarmWriteWindowActive) {
-      return 'Sent · auto-clears on reply or after 5s.';
-    }
-
-    return 'ResetOn/Off and Alarm ON/OFF may need a fresh edge; Reset and Acknowledge retry safely.';
-  }, [isAnyAlarmWriteWindowActive]);
-
   const panelContent = (
     <>
       <InjectValueHero
@@ -1605,24 +1137,9 @@ export default function InjectValue({
         onTemperatureChange={handleTemperatureChange}
         onSmokeDensityChange={handleSmokeDensityChange}
       />
-      <AccommodationAlarmSection
-        alarmStatusLabel={alarmState.alarmStatusLabel}
-        alarmStatusCode={alarmState.alarmStatusCode}
-        sirenOn={alarmState.sirenOn}
-        outputs={alarmState.outputs}
-        hint={alarmHint}
-        commandHint={alarmCommandHint}
-        behaviorHint={alarmBehaviorHint}
-        isConnected={status === 'connected'}
-        isCommandLocked={isAlarmCommandLocked}
-        getCommandCountdown={getAlarmCommandCountdown}
-        isPending={isAlarmPending}
-        mqttLinkLabel={mqttLinkMeta.label}
-        mqttLinkDetail={mqttLinkMeta.detail}
-        mqttLinkTone={mqttLinkMeta.tone}
-        writeWindowLabel={writeWindowLabel}
-        writeWindowDetail={writeWindowDetail}
-        onCommandPress={sendAlarmCommand}
+      <FgsCalcDisplay
+        temperatureC={parseAccommodationTemperature(draftForm.temperatureValue)}
+        smokePpm={parseAccommodationSmokeDensity(draftForm.smokeDensityValue)}
       />
     </>
   );

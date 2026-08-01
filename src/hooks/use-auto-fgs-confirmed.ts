@@ -11,7 +11,12 @@ import type { PublishTopicFn } from '@/providers/mqtt-provider';
 
 type MetricsPayload = Parameters<typeof getCarloGavazziCounterNumericValue>[0];
 
+// W3 word is a 2-bit status field:
+//   bit 0 — FGS confirmed (danger): temp ≥ 82°C OR smoke ≥ 11 ppm
+//   bit 1 — warning active:         temp ≥ 40°C OR smoke ≥ 5 ppm
+const FGS_TEMPERATURE_WARNING_C = 40;
 const FGS_TEMPERATURE_ALERT_C = 82;
+const FGS_SMOKE_DENSITY_WARNING_PPM = 5;
 const FGS_SMOKE_DENSITY_ALERT_PPM = 11;
 
 export function useAutoFgsConfirmed({
@@ -27,16 +32,23 @@ export function useAutoFgsConfirmed({
   metricsPayload: MetricsPayload | null;
   publishTopic: PublishTopicFn;
 }) {
-  const lastPublishedValueRef = useRef<0 | 1 | null>(null);
+  const lastPublishedValueRef = useRef<number | null>(null);
   const publishRef = useRef(publishTopic);
   publishRef.current = publishTopic;
 
   useEffect(() => {
-    const tempTriggered = temperatureC !== null && temperatureC >= FGS_TEMPERATURE_ALERT_C;
-    const smokeTriggered = smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_ALERT_PPM;
-    const desiredFgsConfirmed: 0 | 1 = tempTriggered || smokeTriggered ? 1 : 0;
+    const dangerBit: 0 | 1 =
+      (temperatureC !== null && temperatureC >= FGS_TEMPERATURE_ALERT_C) ||
+      (smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_ALERT_PPM)
+        ? 1 : 0;
+    const warningBit: 0 | 1 =
+      (temperatureC !== null && temperatureC >= FGS_TEMPERATURE_WARNING_C) ||
+      (smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_WARNING_PPM)
+        ? 1 : 0;
+    // Pack: bit 1 = warning, bit 0 = danger. Possible values: 0, 2, 3.
+    const desiredFgsWord = (warningBit << 1) | dangerBit;
 
-    if (!enabled || !metricsPayload || desiredFgsConfirmed === null) {
+    if (!enabled || !metricsPayload) {
       lastPublishedValueRef.current = null;
       return;
     }
@@ -50,21 +62,21 @@ export function useAutoFgsConfirmed({
 
     const currentWords = unpackToPlcCommand(Math.round(packedValue));
 
-    if (currentWords.fgsConfirmed === desiredFgsConfirmed) {
+    if (currentWords.fgsConfirmed === desiredFgsWord) {
       lastPublishedValueRef.current = null;
       return;
     }
 
-    if (lastPublishedValueRef.current === desiredFgsConfirmed) {
+    if (lastPublishedValueRef.current === desiredFgsWord) {
       return;
     }
 
-    lastPublishedValueRef.current = desiredFgsConfirmed;
+    lastPublishedValueRef.current = desiredFgsWord;
     const nextPackedValue = packToPlcCommand({
       pressurePump1Counter: currentWords.pressurePump1Counter,
       pressurePump2Counter: currentWords.pressurePump2Counter,
       pumpActivation: 0,
-      fgsConfirmed: desiredFgsConfirmed,
+      fgsConfirmed: desiredFgsWord,
     });
 
     void publishRef
@@ -74,7 +86,7 @@ export function useAutoFgsConfirmed({
         { qos: 0, retain: false }
       )
       .catch(() => {
-        if (lastPublishedValueRef.current === desiredFgsConfirmed) {
+        if (lastPublishedValueRef.current === desiredFgsWord) {
           lastPublishedValueRef.current = null;
         }
       });
