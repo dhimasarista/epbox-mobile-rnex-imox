@@ -454,7 +454,10 @@ export function computeFgsWord(temperatureC: number, smokePpm: number): number {
   const tempWarnBit: 0 | 1 =
     temperatureC >= ACCOMMODATION_TEMP_WARNING_C && temperatureC < ACCOMMODATION_TEMP_ALERT_C ? 1 : 0;
   const smokeHighBit: 0 | 1 = smokePpm >= ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM ? 1 : 0;
-  return (smokeHighBit << 2) | (tempWarnBit << 1) | tempHighBit;
+  const smokeWarnBit: 0 | 1 =
+    smokePpm >= ACCOMMODATION_SMOKE_DENSITY_WARNING_PPM &&
+    smokePpm < ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM ? 1 : 0;
+  return (smokeWarnBit << 3) | (smokeHighBit << 2) | (tempWarnBit << 1) | tempHighBit;
 }
 
 function FgsCalcDisplay({
@@ -468,11 +471,13 @@ function FgsCalcDisplay({
   const tempHighBit = word & 1;
   const tempWarnBit = (word >> 1) & 1;
   const smokeHighBit = (word >> 2) & 1;
+  const smokeWarnBit = (word >> 3) & 1;
 
   const bits = [
     { label: 'b0 · Temp High', value: tempHighBit, tone: tempHighBit ? 'danger' : 'normal' },
     { label: 'b1 · Temp Warn', value: tempWarnBit, tone: tempWarnBit ? 'warning' : 'normal' },
     { label: 'b2 · Smoke High', value: smokeHighBit, tone: smokeHighBit ? 'danger' : 'normal' },
+    { label: 'b3 · Smoke Warn', value: smokeWarnBit, tone: smokeWarnBit ? 'warning' : 'normal' },
   ] as const;
 
   return (

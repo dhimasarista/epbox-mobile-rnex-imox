@@ -70,7 +70,6 @@ function getToPlcCommandId(kind: ToPlcPendingKind) {
   return `to-plc:${kind}`;
 }
 
-
 function isPressureCommand(
   command: PendingCommandState<ToPlcCommandSnapshot>
 ): command is PendingCommandState<
@@ -138,27 +137,29 @@ const DO_WORD_MASK = 0xffff;
 // ─── Inject Value Constants (pressure set-point) ─────────────────────────────
 
 const PRESSURE_MIN_BAR = 0;
-const PRESSURE_MAX_BAR = 16;
+const PRESSURE_MAX_BAR = 18;
 
 // Debounce button selections before publishing so we don't flood the OT channel.
 const COMMAND_DEBOUNCE_MS = 250;
 const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 
-// PT-001 / PT-002: color band thresholds in bar
-const PRESSURE_LOW_BAR = 2;     // live-low
-const PRESSURE_WARNING_BAR = 8;  // 0–7 normal, 8–10 warning
-const PRESSURE_DANGER_BAR = 11;  // 11–16 danger
+// PT-001 / PT-002: 0–12 warning, 13–16 normal, 17–18 danger.
+const PRESSURE_NORMAL_BAR = 13;
+const PRESSURE_DANGER_BAR = 17;
 
 // FGS threshold bits (mirrors inject-value.tsx / use-auto-fgs-confirmed.ts)
 const FGS_TEMP_ALERT_C = 82;
 const FGS_TEMP_WARNING_C = 40;
+const FGS_SMOKE_WARNING_PPM = 5;
 const FGS_SMOKE_ALERT_PPM = 11;
 
 function computeFgsWordFromAccommodation(tempC: number, smokePpm: number): number {
   const tempHigh: 0 | 1 = tempC >= FGS_TEMP_ALERT_C ? 1 : 0;
   const tempWarn: 0 | 1 = tempC >= FGS_TEMP_WARNING_C && tempC < FGS_TEMP_ALERT_C ? 1 : 0;
   const smokeHigh: 0 | 1 = smokePpm >= FGS_SMOKE_ALERT_PPM ? 1 : 0;
-  return (smokeHigh << 2) | (tempWarn << 1) | tempHigh;
+  const smokeWarn: 0 | 1 =
+    smokePpm >= FGS_SMOKE_WARNING_PPM && smokePpm < FGS_SMOKE_ALERT_PPM ? 1 : 0;
+  return (smokeWarn << 3) | (smokeHigh << 2) | (tempWarn << 1) | tempHigh;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -177,8 +178,8 @@ function formatPressureBar(v: number) { return `${clampPressureBar(v)} bar`; }
 
 function getPressureTone(bar: number): SignalTone {
   if (bar >= PRESSURE_DANGER_BAR)  return 'danger';
-  if (bar >= PRESSURE_WARNING_BAR) return 'warning';
-  return 'normal';
+  if (bar >= PRESSURE_NORMAL_BAR) return 'normal';
+  return 'warning';
 }
 
 // Pack the current pressure drafts and PLC flags into the TO PLC uint64 (7193).
@@ -214,14 +215,9 @@ function getDerivedAlarm(form: PumpRoomPlcInputs): DerivedAlarm {
   if (p1 >= PRESSURE_DANGER_BAR || p2 >= PRESSURE_DANGER_BAR) {
     conditions.push('High Pressure');
     level = 'danger';
-  } else if (p1 >= PRESSURE_WARNING_BAR || p2 >= PRESSURE_WARNING_BAR) {
+  } else if (p1 < PRESSURE_NORMAL_BAR || p2 < PRESSURE_NORMAL_BAR) {
     conditions.push('Pressure Warning');
     level = 'warning';
-  }
-
-  if (p1 < PRESSURE_LOW_BAR || p2 < PRESSURE_LOW_BAR) {
-    conditions.push('Low Pressure');
-    level = 'danger';
   }
 
   return { level, conditions };
@@ -354,6 +350,7 @@ function ToPlcWordDisplay({
   const w2Bit1 = (w2Word >> 1) & 1;
   const w2Bit2 = (w2Word >> 2) & 1;
   const w2Bit3 = (w2Word >> 3) & 1;
+  const w2Bit4 = (w2Word >> 4) & 1;
   const simpleWords = [
     { label: 'W0 · PT1', value: pt1Counter, active: pt1Counter > 0 },
     { label: 'W1 · PT2', value: pt2Counter, active: pt2Counter > 0 },
@@ -393,6 +390,11 @@ function ToPlcWordDisplay({
             <View style={[s.fgsBit, w2Bit3 === 1 && s.fgsBitActive]}>
               <Text style={[s.fgsBitText, w2Bit3 === 1 && s.fgsBitTextActive]}>
                 3 Smoke High
+              </Text>
+            </View>
+            <View style={[s.fgsBit, w2Bit4 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, w2Bit4 === 1 && s.fgsBitTextActive]}>
+                4 Smoke Warning
               </Text>
             </View>
           </View>
@@ -468,10 +470,10 @@ function PressureButtonGrid({
           );
         })}
       </View>
-      {/* Bands are flex-proportional to button count per zone: 8 / 3 / 6 */}
+      {/* Bands are flex-proportional to button count per zone: 13 / 4 / 2 */}
       <View style={stationStyles.signalBandsRow}>
-        <View style={[stationStyles.signalBand, stationStyles.signalBandNormal, tone === 'normal' && stationStyles.signalBandActive, { flex: PRESSURE_WARNING_BAR - PRESSURE_MIN_BAR }]} />
-        <View style={[stationStyles.signalBand, stationStyles.signalBandWarning, tone === 'warning' && stationStyles.signalBandActive, { flex: PRESSURE_DANGER_BAR - PRESSURE_WARNING_BAR }]} />
+        <View style={[stationStyles.signalBand, stationStyles.signalBandWarning, tone === 'warning' && stationStyles.signalBandActive, { flex: PRESSURE_NORMAL_BAR - PRESSURE_MIN_BAR }]} />
+        <View style={[stationStyles.signalBand, stationStyles.signalBandNormal, tone === 'normal' && stationStyles.signalBandActive, { flex: PRESSURE_DANGER_BAR - PRESSURE_NORMAL_BAR }]} />
         <View style={[stationStyles.signalBand, stationStyles.signalBandDanger, tone === 'danger' && stationStyles.signalBandActive, { flex: PRESSURE_MAX_BAR - PRESSURE_DANGER_BAR + 1 }]} />
       </View>
 
@@ -706,48 +708,6 @@ export default function PumpRoom({
     flashInject(command.snapshot.successMessage);
   }, [flashInject]);
 
-  // ── Auto-adjust PT-001 / PT-002 on pump state transitions ──
-  // Start running with 0 pressure → bump to 3 (minimum sensible value).
-  // Stop normally (no trip) → reset to 0. Trip excluded: keep value for diagnostics.
-  const isAnyPumpRunning = doState.pumpARunning || doState.pumpBRunning || doState.pumpCRunning;
-  const isAnyPumpTripped = doState.pumpATripped || doState.pumpBTripped;
-  const prevIsAnyPumpRunningRef = useRef(isAnyPumpRunning);
-  useEffect(() => {
-    const wasRunning = prevIsAnyPumpRunningRef.current;
-    prevIsAnyPumpRunningRef.current = isAnyPumpRunning;
-
-    if (!wasRunning && isAnyPumpRunning) {
-      // Pump just started — set any zero pressure to 3 bar.
-      const bump = formatPressureBar(3);
-      setInjectDraft((current) => ({
-        ...current,
-        pressurePump1: parsePressureBar(current.pressurePump1) === 0 ? bump : current.pressurePump1,
-        pressurePump2: parsePressureBar(current.pressurePump2) === 0 ? bump : current.pressurePump2,
-      }));
-      setConfirmedInject((current) => {
-        const next = {
-          ...current,
-          pressurePump1: parsePressureBar(current.pressurePump1) === 0 ? bump : current.pressurePump1,
-          pressurePump2: parsePressureBar(current.pressurePump2) === 0 ? bump : current.pressurePump2,
-        };
-        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
-        return next;
-      });
-      return;
-    }
-
-    if (wasRunning && !isAnyPumpRunning && !isAnyPumpTripped) {
-      // Pump stopped normally → reset to 0.
-      const zero = formatPressureBar(0);
-      setInjectDraft((current) => ({ ...current, pressurePump1: zero, pressurePump2: zero }));
-      setConfirmedInject((current) => {
-        const next = { ...current, pressurePump1: zero, pressurePump2: zero };
-        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
-        return next;
-      });
-    }
-  }, [isAnyPumpRunning, isAnyPumpTripped]);
-
   // ── FROM PLC: sync metrics → DO word (only while connected) ──
   useEffect(() => {
     if (status !== 'connected' || !metricsTopic.payload) return;
@@ -908,6 +868,90 @@ export default function PumpRoom({
       ),
     [publishTopic]
   );
+
+  const resetPressureFields = useCallback(
+    (fields: readonly PumpRoomPlcInputKey[], reason: string) => {
+      if (fields.length === 0) {
+        return;
+      }
+
+      const zero = formatPressureBar(0);
+      const fieldSet = new Set<PumpRoomPlcInputKey>(fields);
+      const nextInputs: PumpRoomPlcInputs = {
+        ...injectDraftRef.current,
+        ...(fieldSet.has('pressurePump1') ? { pressurePump1: zero } : {}),
+        ...(fieldSet.has('pressurePump2') ? { pressurePump2: zero } : {}),
+      };
+
+      setInjectDraft(nextInputs);
+      setConfirmedInject((current) => {
+        const next = {
+          ...current,
+          ...(fieldSet.has('pressurePump1') ? { pressurePump1: zero } : {}),
+          ...(fieldSet.has('pressurePump2') ? { pressurePump2: zero } : {}),
+        };
+        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
+        return next;
+      });
+
+      if (status !== 'connected') {
+        flashInject(`SIM — ${reason}`);
+        return;
+      }
+
+      const packed = packInputs(nextInputs, remoteActivationValue, fgsConfirmedValue);
+      void publishPackedToPlc(packed)
+        .then(() => {
+          flashInject(`${reason} → PLC`);
+          setLastCommandError(null);
+        })
+        .catch((error: unknown) => {
+          showCommandError(error instanceof Error ? error.message : `Unable to send ${reason}.`);
+        });
+    },
+    [
+      fgsConfirmedValue,
+      flashInject,
+      publishPackedToPlc,
+      remoteActivationValue,
+      showCommandError,
+      status,
+    ]
+  );
+
+  const prevPumpRunningRef = useRef({
+    pumpA: doState.pumpARunning,
+    pumpB: doState.pumpBRunning,
+  });
+  useEffect(() => {
+    const previous = prevPumpRunningRef.current;
+    prevPumpRunningRef.current = {
+      pumpA: doState.pumpARunning,
+      pumpB: doState.pumpBRunning,
+    };
+
+    const fieldsToReset: PumpRoomPlcInputKey[] = [];
+    if (previous.pumpA && !doState.pumpARunning) {
+      fieldsToReset.push('pressurePump1');
+    }
+    if (previous.pumpB && !doState.pumpBRunning) {
+      fieldsToReset.push('pressurePump2');
+    }
+
+    if (fieldsToReset.length > 0) {
+      resetPressureFields(fieldsToReset, 'Pump running reset');
+    }
+  }, [doState.pumpARunning, doState.pumpBRunning, resetPressureFields]);
+
+  const prevRemoteActivationRef = useRef(remoteActivationValue);
+  useEffect(() => {
+    const previous = prevRemoteActivationRef.current;
+    prevRemoteActivationRef.current = remoteActivationValue;
+
+    if (previous === 1 && remoteActivationValue === 0) {
+      resetPressureFields(['pressurePump1', 'pressurePump2'], 'Remote reset pressure');
+    }
+  }, [remoteActivationValue, resetPressureFields]);
 
   const sendToPlcCommand = useCallback(
     async (
@@ -1122,7 +1166,11 @@ export default function PumpRoom({
       setRemoteActivationValue(valueToSend);
       setNextPumpActivationValue(nextValue);
       flashInject(
-        `SIM — ${label} → ${packInputs(injectDraftRef.current, valueToSend, fgsConfirmedValue)}`
+        `SIM — ${label} → ${packInputs(
+          injectDraftRef.current,
+          valueToSend,
+          fgsConfirmedValue
+        )}`
       );
       return;
     }
