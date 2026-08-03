@@ -32,7 +32,7 @@ export function useAutoFgsConfirmed({
   metricsPayload: MetricsPayload | null;
   publishTopic: PublishTopicFn;
 }) {
-  const lastPublishedValueRef = useRef<number | null>(null);
+  const inFlightValueRef = useRef<number | null>(null);
   const publishRef = useRef(publishTopic);
   publishRef.current = publishTopic;
 
@@ -49,33 +49,30 @@ export function useAutoFgsConfirmed({
     const desiredFgsWord = (smokeHighBit << 2) | (tempWarnBit << 1) | tempHighBit;
 
     if (!enabled || !metricsPayload) {
-      lastPublishedValueRef.current = null;
+      inFlightValueRef.current = null;
       return;
     }
 
     const toPlcDeviceId = CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.toPlc.deviceId;
     const packedValue = getCarloGavazziCounterNumericValue(metricsPayload, toPlcDeviceId);
 
-    // If TO PLC metrics haven't arrived yet, use zero defaults for W0/W1/W2
-    // so W3 can still be published — pump-room re-publishes W0/W1/W2 independently.
-    const currentWords = packedValue !== null
-      ? unpackToPlcCommand(Math.round(packedValue))
-      : { pressurePump1Counter: 0, pressurePump2Counter: 0, pumpActivation: 0, fgsConfirmed: -1 };
+    if (packedValue === null) {
+      inFlightValueRef.current = null;
+      return;
+    }
+
+    const currentWords = unpackToPlcCommand(Math.round(packedValue));
 
     if (currentWords.fgsConfirmed === desiredFgsWord) {
-      lastPublishedValueRef.current = null;
+      inFlightValueRef.current = null;
       return;
     }
 
-    // For anomalous states (any bit set), skip the dedup guard so the command
-    // is re-published on every metrics cycle until the gateway confirms it.
-    // For normal state (all bits clear), keep the guard to avoid constant noise.
-    const isAnomalous = desiredFgsWord !== 0;
-    if (!isAnomalous && lastPublishedValueRef.current === desiredFgsWord) {
+    if (inFlightValueRef.current === desiredFgsWord) {
       return;
     }
 
-    lastPublishedValueRef.current = desiredFgsWord;
+    inFlightValueRef.current = desiredFgsWord;
     const nextPackedValue = packToPlcCommand({
       pressurePump1Counter: currentWords.pressurePump1Counter,
       pressurePump2Counter: currentWords.pressurePump2Counter,
@@ -89,9 +86,14 @@ export function useAutoFgsConfirmed({
         buildCarloGavazziOtCommand(toPlcDeviceId, 'SetValue', nextPackedValue),
         { qos: 0, retain: false }
       )
+      .then(() => {
+        if (inFlightValueRef.current === desiredFgsWord) {
+          inFlightValueRef.current = null;
+        }
+      })
       .catch(() => {
-        if (lastPublishedValueRef.current === desiredFgsWord) {
-          lastPublishedValueRef.current = null;
+        if (inFlightValueRef.current === desiredFgsWord) {
+          inFlightValueRef.current = null;
         }
       });
   }, [temperatureC, smokeDensityPpm, enabled, metricsPayload]);

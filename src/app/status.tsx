@@ -189,8 +189,8 @@ export default function StatusScreen() {
   const actionLabel = isConnecting
     ? 'Connecting...'
     : isConnected
-      ? 'Disconnect MQTT'
-      : 'Connect MQTT';
+      ? 'Disconnect'
+      : 'Connect';
 
   const overviewCards: StatusOverviewCard[] = useMemo(
     () => [

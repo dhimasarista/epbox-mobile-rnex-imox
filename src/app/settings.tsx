@@ -138,7 +138,7 @@ export default function SettingsScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.title}>Settings</Text>
-            <Text style={styles.subtitle}>Configure MQTT access without bundling secrets in the app.</Text>
+            <Text style={styles.subtitle}>Configure your preferences</Text>
           </View>
           <View style={styles.headerIcon}>
             <Feather name="settings" size={18} color={AppColors.text} />
@@ -147,10 +147,10 @@ export default function SettingsScreen() {
 
         <View style={styles.formCard}>
           <View style={styles.formCardHeader}>
-            <View style={styles.formBadge}>
+            {/* <View style={styles.formBadge}>
               <Feather name="shield" size={15} color={AppColors.success} />
               <Text style={styles.formBadgeText}>MQTT Configuration</Text>
-            </View>
+            </View> */}
             <Text style={styles.formTitle}>Broker Setup</Text>
             <Text style={styles.formDescription}>
               Save broker host or URL. For Android preview, prefer the full {getMqttRuntimeTransportLabel('ws')}.
@@ -194,11 +194,7 @@ export default function SettingsScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>EPBOX ENGINEERING</Text>
-          <Text style={styles.infoValue}>IMOX 2026</Text>
-          <Text style={styles.infoSubtitle}>Firmware version 0.1.0</Text>
-        </View>
+     
 
         <Pressable onPress={handleSignOut} style={({ pressed }) => [styles.logoutButton, pressed && styles.logoutButtonPressed]}>
           <Text style={styles.logoutButtonText}>Sign Out</Text>

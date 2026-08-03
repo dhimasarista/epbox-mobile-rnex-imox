@@ -3,6 +3,7 @@ import { getMqttTransportLabel } from '@/lib/mqtt-settings';
 import { useMqtt } from '@/providers/mqtt-provider';
 import { AppColors } from '@/styles';
 import { getBannerHeight, styles } from '@/styles/screens/home.styles';
+import { styles as settingsStyles } from '@/styles/screens/settings.styles';
 import { Feather, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import LottieView from 'lottie-react-native';
@@ -77,7 +78,7 @@ export default function HomeScreen() {
   const statCards = useMemo<HomeStatCardConfig[]>(
     () => [
       {
-        title: 'Gateway\nStatus',
+        title: 'Connection\nStatus',
         iconName: 'radio',
         value: gatewayStatusValue,
       },
@@ -167,7 +168,14 @@ export default function HomeScreen() {
             <HomeStatCard key={card.title} {...card} />
           ))}
         </View>
-
+        <View style={{
+          paddingBottom: 20,
+        }} />
+<View style={settingsStyles.infoCard}>
+                  <Text style={settingsStyles.infoTitle}>EPBOX ENGINEERING</Text>
+                  <Text style={settingsStyles.infoValue}>IMOX 2026</Text>
+                  <Text style={settingsStyles.infoSubtitle}>Firmware version 0.1.0</Text>
+                </View>
         <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
