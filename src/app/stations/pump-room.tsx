@@ -133,10 +133,10 @@ const PRESSURE_MAX_BAR = 16;
 const COMMAND_DEBOUNCE_MS = 250;
 const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 
-// PT-001 / PT-002: alarm thresholds in bar
-const PRESSURE_LOW_BAR = 2;      // live-low
-const PRESSURE_WARNING_BAR = 7.5; // caution
-const PRESSURE_DANGER_BAR = 10.2; // critical
+// PT-001 / PT-002: color band thresholds in bar
+const PRESSURE_LOW_BAR = 2;     // live-low
+const PRESSURE_WARNING_BAR = 8;  // 0–7 normal, 8–10 warning
+const PRESSURE_DANGER_BAR = 11;  // 11–16 danger
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -319,6 +319,7 @@ function ToPlcWordDisplay({
 }) {
   const fgsBit0 = fgsConfirmed & 1;
   const fgsBit1 = (fgsConfirmed >> 1) & 1;
+  const fgsBit2 = (fgsConfirmed >> 2) & 1;
   const simpleWords = [
     { label: 'W0 · PT1', value: pt1Counter, active: pt1Counter > 0 },
     { label: 'W1 · PT2', value: pt2Counter, active: pt2Counter > 0 },
@@ -342,10 +343,13 @@ function ToPlcWordDisplay({
           <Text style={s.wordLabel}>W3 · FGS</Text>
           <View style={s.fgsBitRow}>
             <View style={[s.fgsBit, fgsBit0 === 1 && s.fgsBitActive]}>
-              <Text style={[s.fgsBitText, fgsBit0 === 1 && s.fgsBitTextActive]}>0 · Confirmed</Text>
+              <Text style={[s.fgsBitText, fgsBit0 === 1 && s.fgsBitTextActive]}>0 · Temp High</Text>
             </View>
             <View style={[s.fgsBit, fgsBit1 === 1 && s.fgsBitActive]}>
-              <Text style={[s.fgsBitText, fgsBit1 === 1 && s.fgsBitTextActive]}>1 · Warning</Text>
+              <Text style={[s.fgsBitText, fgsBit1 === 1 && s.fgsBitTextActive]}>1 · Temp Warn</Text>
+            </View>
+            <View style={[s.fgsBit, fgsBit2 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, fgsBit2 === 1 && s.fgsBitTextActive]}>2 · Smoke High</Text>
             </View>
           </View>
         </View>
@@ -416,6 +420,13 @@ function PressureButtonGrid({
           );
         })}
       </View>
+      {/* Bands are flex-proportional to button count per zone: 8 / 3 / 6 */}
+      <View style={stationStyles.signalBandsRow}>
+        <View style={[stationStyles.signalBand, stationStyles.signalBandNormal, tone === 'normal' && stationStyles.signalBandActive, { flex: PRESSURE_WARNING_BAR - PRESSURE_MIN_BAR }]} />
+        <View style={[stationStyles.signalBand, stationStyles.signalBandWarning, tone === 'warning' && stationStyles.signalBandActive, { flex: PRESSURE_DANGER_BAR - PRESSURE_WARNING_BAR }]} />
+        <View style={[stationStyles.signalBand, stationStyles.signalBandDanger, tone === 'danger' && stationStyles.signalBandActive, { flex: PRESSURE_MAX_BAR - PRESSURE_DANGER_BAR + 1 }]} />
+      </View>
+
       <View style={stationStyles.sliderRangeRow}>
         <Text style={stationStyles.sliderRangeText}>{PRESSURE_MIN_BAR}</Text>
         <Text style={stationStyles.sliderRangeText}>{PRESSURE_MAX_BAR}</Text>
@@ -429,12 +440,14 @@ function PumpActivationButton({
   disabled,
   nextValue,
   blockReason,
+  remoteMode,
   onPress,
 }: {
   simulation: boolean;
   disabled: boolean;
   nextValue: 0 | 1;
   blockReason?: string | null;
+  remoteMode: boolean;
   onPress: () => void;
 }) {
   const isReset = nextValue === 0;
@@ -446,6 +459,7 @@ function PumpActivationButton({
       <TouchableOpacity
         style={[
           s.pumpActBtn,
+          remoteMode && s.pumpActBtnRemote,
           simulation && s.pumpActBtnSim,
           isReset && s.pumpActBtnOff,
           (disabled || isBlocked) && s.pumpActBtnDisabled,
@@ -640,6 +654,48 @@ export default function PumpRoom({
 
     flashInject(command.snapshot.successMessage);
   }, [flashInject]);
+
+  // ── Auto-adjust PT-001 / PT-002 on pump state transitions ──
+  // Start running with 0 pressure → bump to 3 (minimum sensible value).
+  // Stop normally (no trip) → reset to 0. Trip excluded: keep value for diagnostics.
+  const isAnyPumpRunning = doState.pumpARunning || doState.pumpBRunning || doState.pumpCRunning;
+  const isAnyPumpTripped = doState.pumpATripped || doState.pumpBTripped;
+  const prevIsAnyPumpRunningRef = useRef(isAnyPumpRunning);
+  useEffect(() => {
+    const wasRunning = prevIsAnyPumpRunningRef.current;
+    prevIsAnyPumpRunningRef.current = isAnyPumpRunning;
+
+    if (!wasRunning && isAnyPumpRunning) {
+      // Pump just started — set any zero pressure to 3 bar.
+      const bump = formatPressureBar(3);
+      setInjectDraft((current) => ({
+        ...current,
+        pressurePump1: parsePressureBar(current.pressurePump1) === 0 ? bump : current.pressurePump1,
+        pressurePump2: parsePressureBar(current.pressurePump2) === 0 ? bump : current.pressurePump2,
+      }));
+      setConfirmedInject((current) => {
+        const next = {
+          ...current,
+          pressurePump1: parsePressureBar(current.pressurePump1) === 0 ? bump : current.pressurePump1,
+          pressurePump2: parsePressureBar(current.pressurePump2) === 0 ? bump : current.pressurePump2,
+        };
+        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
+        return next;
+      });
+      return;
+    }
+
+    if (wasRunning && !isAnyPumpRunning && !isAnyPumpTripped) {
+      // Pump stopped normally → reset to 0.
+      const zero = formatPressureBar(0);
+      setInjectDraft((current) => ({ ...current, pressurePump1: zero, pressurePump2: zero }));
+      setConfirmedInject((current) => {
+        const next = { ...current, pressurePump1: zero, pressurePump2: zero };
+        if (hasHydratedRef.current) void setStoredPumpRoomPlcInputs(next);
+        return next;
+      });
+    }
+  }, [isAnyPumpRunning, isAnyPumpTripped]);
 
   // ── FROM PLC: sync metrics → DO word (only while connected) ──
   useEffect(() => {
@@ -1096,6 +1152,7 @@ export default function PumpRoom({
             simulation={isSimulation}
             disabled={isPumpActivationPending}
             nextValue={nextPumpActivationValue}
+            remoteMode={doState.remoteMode}
             onPress={triggerPumpActivation}
           />
 
@@ -1284,6 +1341,7 @@ const s = StyleSheet.create({
     paddingVertical: AppSpacing.md,
     paddingHorizontal: AppSpacing.lg,
   },
+  pumpActBtnRemote: { backgroundColor: AppColors.success },
   pumpActBtnSim: { backgroundColor: AppColors.error },
   pumpActBtnOff: { backgroundColor: AppColors.text },
   pumpActBtnDisabled: { opacity: 0.55 },

@@ -450,16 +450,11 @@ function AccommodationSmokeDensityField({
 }
 
 export function computeFgsWord(temperatureC: number, smokePpm: number): number {
-  const dangerBit: 0 | 1 =
-    temperatureC >= ACCOMMODATION_TEMP_ALERT_C ||
-    smokePpm >= ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM
-      ? 1 : 0;
-  const warningBit: 0 | 1 =
-    dangerBit === 0 && (
-      temperatureC >= ACCOMMODATION_TEMP_WARNING_C ||
-      smokePpm >= ACCOMMODATION_SMOKE_DENSITY_WARNING_PPM
-    ) ? 1 : 0;
-  return (warningBit << 1) | dangerBit;
+  const tempHighBit: 0 | 1 = temperatureC >= ACCOMMODATION_TEMP_ALERT_C ? 1 : 0;
+  const tempWarnBit: 0 | 1 =
+    temperatureC >= ACCOMMODATION_TEMP_WARNING_C && temperatureC < ACCOMMODATION_TEMP_ALERT_C ? 1 : 0;
+  const smokeHighBit: 0 | 1 = smokePpm >= ACCOMMODATION_SMOKE_DENSITY_ALERT_PPM ? 1 : 0;
+  return (smokeHighBit << 2) | (tempWarnBit << 1) | tempHighBit;
 }
 
 function FgsCalcDisplay({
@@ -470,33 +465,34 @@ function FgsCalcDisplay({
   smokePpm: number;
 }) {
   const word = computeFgsWord(temperatureC, smokePpm);
-  const dangerBit = word & 1;
-  const warningBit = (word >> 1) & 1;
-  const dangerPalette = getSignalPalette(dangerBit ? 'danger' : 'normal');
-  const warningPalette = getSignalPalette(warningBit ? 'warning' : 'normal');
+  const tempHighBit = word & 1;
+  const tempWarnBit = (word >> 1) & 1;
+  const smokeHighBit = (word >> 2) & 1;
+
+  const bits = [
+    { label: 'b0 · Temp High', value: tempHighBit, tone: tempHighBit ? 'danger' : 'normal' },
+    { label: 'b1 · Temp Warn', value: tempWarnBit, tone: tempWarnBit ? 'warning' : 'normal' },
+    { label: 'b2 · Smoke High', value: smokeHighBit, tone: smokeHighBit ? 'danger' : 'normal' },
+  ] as const;
 
   return (
     <View style={styles.sectionCard}>
       <Text style={[styles.fieldLabel, { marginBottom: 8 }]}>FGS W3 Calculation</Text>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-        <View style={[
-          styles.signalValueChip,
-          { backgroundColor: dangerPalette.surface, borderColor: dangerPalette.border },
-        ]}>
-          <View style={[styles.signalValueDot, { backgroundColor: dangerPalette.accent }]} />
-          <Text style={[styles.signalValueText, { color: dangerPalette.text }]}>
-            b0 · Confirmed: {dangerBit}
-          </Text>
-        </View>
-        <View style={[
-          styles.signalValueChip,
-          { backgroundColor: warningPalette.surface, borderColor: warningPalette.border },
-        ]}>
-          <View style={[styles.signalValueDot, { backgroundColor: warningPalette.accent }]} />
-          <Text style={[styles.signalValueText, { color: warningPalette.text }]}>
-            b1 · Warning: {warningBit}
-          </Text>
-        </View>
+        {bits.map((bit) => {
+          const palette = getSignalPalette(bit.tone);
+          return (
+            <View key={bit.label} style={[
+              styles.signalValueChip,
+              { backgroundColor: palette.surface, borderColor: palette.border },
+            ]}>
+              <View style={[styles.signalValueDot, { backgroundColor: palette.accent }]} />
+              <Text style={[styles.signalValueText, { color: palette.text }]}>
+                {bit.label}: {bit.value}
+              </Text>
+            </View>
+          );
+        })}
         <View style={[
           styles.signalValueChip,
           { backgroundColor: AppColors.surface, borderColor: AppColors.border },

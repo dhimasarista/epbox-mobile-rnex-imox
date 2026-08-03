@@ -11,12 +11,12 @@ import type { PublishTopicFn } from '@/providers/mqtt-provider';
 
 type MetricsPayload = Parameters<typeof getCarloGavazziCounterNumericValue>[0];
 
-// W3 word is a 2-bit status field:
-//   bit 0 — FGS confirmed (danger): temp ≥ 82°C OR smoke ≥ 11 ppm
-//   bit 1 — warning active:         temp ≥ 40°C OR smoke ≥ 5 ppm
+// W3 word is a 3-bit status field:
+//   bit 0 — temperature high (danger):   temp ≥ 82°C
+//   bit 1 — temperature warning:         40°C ≤ temp < 82°C
+//   bit 2 — smoke high (danger):         smoke ≥ 11 ppm
 const FGS_TEMPERATURE_WARNING_C = 40;
 const FGS_TEMPERATURE_ALERT_C = 82;
-const FGS_SMOKE_DENSITY_WARNING_PPM = 5;
 const FGS_SMOKE_DENSITY_ALERT_PPM = 11;
 
 export function useAutoFgsConfirmed({
@@ -37,18 +37,16 @@ export function useAutoFgsConfirmed({
   publishRef.current = publishTopic;
 
   useEffect(() => {
-    const dangerBit: 0 | 1 =
-      (temperatureC !== null && temperatureC >= FGS_TEMPERATURE_ALERT_C) ||
-      (smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_ALERT_PPM)
-        ? 1 : 0;
-    // Warning only activates when danger is NOT active (mutually exclusive).
-    const warningBit: 0 | 1 =
-      dangerBit === 0 && (
-        (temperatureC !== null && temperatureC >= FGS_TEMPERATURE_WARNING_C) ||
-        (smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_WARNING_PPM)
-      ) ? 1 : 0;
-    // Pack: bit 1 = warning, bit 0 = danger. Possible values: 0 (normal), 1 (danger), 2 (warning).
-    const desiredFgsWord = (warningBit << 1) | dangerBit;
+    const tempHighBit: 0 | 1 =
+      temperatureC !== null && temperatureC >= FGS_TEMPERATURE_ALERT_C ? 1 : 0;
+    const tempWarnBit: 0 | 1 =
+      temperatureC !== null &&
+      temperatureC >= FGS_TEMPERATURE_WARNING_C &&
+      temperatureC < FGS_TEMPERATURE_ALERT_C ? 1 : 0;
+    const smokeHighBit: 0 | 1 =
+      smokeDensityPpm !== null && smokeDensityPpm >= FGS_SMOKE_DENSITY_ALERT_PPM ? 1 : 0;
+    // Pack: bit 2 = smoke high, bit 1 = temp warning, bit 0 = temp high.
+    const desiredFgsWord = (smokeHighBit << 2) | (tempWarnBit << 1) | tempHighBit;
 
     if (!enabled || !metricsPayload) {
       lastPublishedValueRef.current = null;
@@ -58,11 +56,11 @@ export function useAutoFgsConfirmed({
     const toPlcDeviceId = CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.toPlc.deviceId;
     const packedValue = getCarloGavazziCounterNumericValue(metricsPayload, toPlcDeviceId);
 
-    if (packedValue === null) {
-      return;
-    }
-
-    const currentWords = unpackToPlcCommand(Math.round(packedValue));
+    // If TO PLC metrics haven't arrived yet, use zero defaults for W0/W1/W2
+    // so W3 can still be published — pump-room re-publishes W0/W1/W2 independently.
+    const currentWords = packedValue !== null
+      ? unpackToPlcCommand(Math.round(packedValue))
+      : { pressurePump1Counter: 0, pressurePump2Counter: 0, pumpActivation: 0, fgsConfirmed: -1 };
 
     if (currentWords.fgsConfirmed === desiredFgsWord) {
       lastPublishedValueRef.current = null;
