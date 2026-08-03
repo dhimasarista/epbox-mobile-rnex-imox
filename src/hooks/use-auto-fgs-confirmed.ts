@@ -67,7 +67,11 @@ export function useAutoFgsConfirmed({
       return;
     }
 
-    if (lastPublishedValueRef.current === desiredFgsWord) {
+    // For anomalous states (any bit set), skip the dedup guard so the command
+    // is re-published on every metrics cycle until the gateway confirms it.
+    // For normal state (all bits clear), keep the guard to avoid constant noise.
+    const isAnomalous = desiredFgsWord !== 0;
+    if (!isAnomalous && lastPublishedValueRef.current === desiredFgsWord) {
       return;
     }
 
@@ -75,7 +79,7 @@ export function useAutoFgsConfirmed({
     const nextPackedValue = packToPlcCommand({
       pressurePump1Counter: currentWords.pressurePump1Counter,
       pressurePump2Counter: currentWords.pressurePump2Counter,
-      pumpActivation: 0,
+      pumpActivation: currentWords.pumpActivation,
       fgsConfirmed: desiredFgsWord,
     });
 

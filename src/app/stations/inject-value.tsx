@@ -211,7 +211,7 @@ function AccommodationTemperatureField({
 }) {
   const confirmedTemperatureValue = parseAccommodationTemperature(confirmedValue);
   const draftTemperatureValue = parseAccommodationTemperature(draftValue);
-  const signalTone = getAccommodationTemperatureSignalTone(confirmedTemperatureValue);
+  const signalTone = getAccommodationTemperatureSignalTone(draftTemperatureValue);
   const signalPalette = getSignalPalette(signalTone);
   const [isHeatingDetailVisible, setIsHeatingDetailVisible] = useState(false);
   const isHeatingOn = heatingState.heatingControlOn;
@@ -304,7 +304,7 @@ function AccommodationTemperatureField({
                 styles.signalValueText,
                 { color: signalPalette.text },
               ]}>
-              {formatAccommodationTemperature(confirmedTemperatureValue)}
+              {formatAccommodationTemperature(draftTemperatureValue)}
             </Text>
           </View>
           </View>
@@ -397,7 +397,7 @@ function AccommodationSmokeDensityField({
 }) {
   const confirmedDensity = parseAccommodationSmokeDensity(confirmedValue);
   const draftDensity = parseAccommodationSmokeDensity(draftValue);
-  const signalTone = getAccommodationSmokeDensityTone(confirmedDensity);
+  const signalTone = getAccommodationSmokeDensityTone(draftDensity);
   const signalPalette = getSignalPalette(signalTone);
 
   return (
@@ -412,7 +412,7 @@ function AccommodationSmokeDensityField({
             ]}>
             <View style={[styles.signalValueDot, { backgroundColor: signalPalette.accent }]} />
             <Text style={[styles.signalValueText, { color: signalPalette.text }]}>
-              {formatAccommodationSmokeDensity(confirmedDensity)}
+              {formatAccommodationSmokeDensity(draftDensity)}
             </Text>
           </View>
         </View>
@@ -618,13 +618,15 @@ export default function InjectValue({
 
   const confirmedTemperatureC = parseAccommodationTemperature(confirmedForm.temperatureValue);
   const confirmedSmokeDensityPpm = parseAccommodationSmokeDensity(confirmedForm.smokeDensityValue);
+  const draftTemperatureC = parseAccommodationTemperature(draftForm.temperatureValue);
+  const draftSmokeDensityPpm = parseAccommodationSmokeDensity(draftForm.smokeDensityValue);
   const smokeDensityCounterId =
     CARLO_GAVAZZI_GATEWAY_CONFIG.accommodationRoom.counterIds.smokeDensity;
 
   useAutoFgsConfirmed({
     enabled: status === 'connected',
-    temperatureC: confirmedTemperatureC,
-    smokeDensityPpm: confirmedSmokeDensityPpm,
+    temperatureC: draftTemperatureC,
+    smokeDensityPpm: draftSmokeDensityPpm,
     metricsPayload: metricsTopic.payload,
     publishTopic,
   });
@@ -944,43 +946,28 @@ export default function InjectValue({
       }
 
       if (metricsState.temperatureValue !== null || metricsState.smokeDensityValue !== null) {
+        const canSyncTemperature =
+          metricsState.temperatureValue !== null &&
+          temperatureSnapshotRef.current === null &&
+          (!isCommandPending(getCounterCommandId('temperatureValue')) ||
+            ackedCounterCommands.some((command) => command.snapshot.field === 'temperatureValue'));
+        const canSyncSmokeDensity =
+          metricsState.smokeDensityValue !== null &&
+          smokeDensitySnapshotRef.current === null &&
+          (!isCommandPending(getCounterCommandId('smokeDensityValue')) ||
+            ackedCounterCommands.some((command) => command.snapshot.field === 'smokeDensityValue'));
+
         setConfirmedForm((current) => {
           const next = { ...current };
-
-          if (metricsState.temperatureValue !== null) {
-            next.temperatureValue = metricsState.temperatureValue;
-          }
-
-          if (metricsState.smokeDensityValue !== null) {
-            next.smokeDensityValue = metricsState.smokeDensityValue;
-          }
-
+          if (canSyncTemperature) next.temperatureValue = metricsState.temperatureValue!;
+          if (canSyncSmokeDensity) next.smokeDensityValue = metricsState.smokeDensityValue!;
           return next;
         });
 
         setDraftForm((current) => {
           const next = { ...current };
-
-          if (
-            metricsState.temperatureValue !== null &&
-            (!isCommandPending(getCounterCommandId('temperatureValue')) ||
-              ackedCounterCommands.some(
-                (command) => command.snapshot.field === 'temperatureValue'
-              ))
-          ) {
-            next.temperatureValue = metricsState.temperatureValue;
-          }
-
-          if (
-            metricsState.smokeDensityValue !== null &&
-            (!isCommandPending(getCounterCommandId('smokeDensityValue')) ||
-              ackedCounterCommands.some(
-                (command) => command.snapshot.field === 'smokeDensityValue'
-              ))
-          ) {
-            next.smokeDensityValue = metricsState.smokeDensityValue;
-          }
-
+          if (canSyncTemperature) next.temperatureValue = metricsState.temperatureValue!;
+          if (canSyncSmokeDensity) next.smokeDensityValue = metricsState.smokeDensityValue!;
           return next;
         });
       }

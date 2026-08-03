@@ -24,6 +24,11 @@ import {
   unpackToPlcCommand,
 } from '@/lib/mqtt-topics';
 import {
+  getStoredAccommodationRoomInputs,
+  parseAccommodationSmokeDensity,
+  parseAccommodationTemperature,
+} from '@/lib/accommodation-room-demo';
+import {
   DEFAULT_PUMP_ROOM_PLC_INPUTS,
   getStoredPumpRoomPlcInputs,
   PUMP_ROOM_PLC_FIELDS,
@@ -137,6 +142,18 @@ const PRESSURE_KEYS: PumpRoomPlcInputKey[] = ['pressurePump1', 'pressurePump2'];
 const PRESSURE_LOW_BAR = 2;     // live-low
 const PRESSURE_WARNING_BAR = 8;  // 0–7 normal, 8–10 warning
 const PRESSURE_DANGER_BAR = 11;  // 11–16 danger
+
+// FGS W3 thresholds (mirrors inject-value.tsx / use-auto-fgs-confirmed.ts)
+const FGS_TEMP_ALERT_C = 82;
+const FGS_TEMP_WARNING_C = 40;
+const FGS_SMOKE_ALERT_PPM = 11;
+
+function computeFgsWordFromAccommodation(tempC: number, smokePpm: number): number {
+  const tempHigh: 0 | 1 = tempC >= FGS_TEMP_ALERT_C ? 1 : 0;
+  const tempWarn: 0 | 1 = tempC >= FGS_TEMP_WARNING_C && tempC < FGS_TEMP_ALERT_C ? 1 : 0;
+  const smokeHigh: 0 | 1 = smokePpm >= FGS_SMOKE_ALERT_PPM ? 1 : 0;
+  return (smokeHigh << 2) | (tempWarn << 1) | tempHigh;
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -570,11 +587,14 @@ export default function PumpRoom({
   const [remoteActivationValue, setRemoteActivationValue] = useState<0 | 1>(0);
   const [fgsConfirmedValue, setFgsConfirmedValue] = useState(0);
   const [nextPumpActivationValue, setNextPumpActivationValue] = useState<0 | 1>(1);
+  // FGS word derived from stored accommodation room values — used offline when
+  // simFgsConfirmed is not provided (standalone pump-room, no engine-room parent).
+  const [localFgsWord, setLocalFgsWord] = useState(0);
 
-  // When offline and a simFgsConfirmed prop is provided (from engine-room slider state), prefer it.
-  const effectiveFgsConfirmed = isSimulation && simFgsConfirmed !== undefined
-    ? simFgsConfirmed
-    : fgsConfirmedValue;
+  // Engine Room passes a live Inject Value simulation word; keep showing it even
+  // while MQTT is connected so W3 bits react immediately as the operator drags.
+  const effectiveFgsConfirmed =
+    simFgsConfirmed ?? (isSimulation ? localFgsWord : fgsConfirmedValue);
 
   // W[2] is held only after MQTT feedback confirms the remote activation/reset command.
   const pt1Counter = pressureBarToCounter(parsePressureBar(injectDraft.pressurePump1));
@@ -736,7 +756,11 @@ export default function PumpRoom({
           : metricsReceivedAt > command.snapshot.baselineReceivedAt;
 
       if (command.snapshot.kind === 'pumpActivation') {
-        return isFresh;
+        return (
+          isFresh &&
+          (command.snapshot.nextRemoteActivationValue === undefined ||
+            gatewayRemoteActivationValue === command.snapshot.nextRemoteActivationValue)
+        );
       }
 
       return (
@@ -940,6 +964,18 @@ export default function PumpRoom({
       startToPlcCommand,
     ]
   );
+
+  // ── FGS word: derive from stored accommodation room values (offline fallback) ──
+  useEffect(() => {
+    let mounted = true;
+    getStoredAccommodationRoomInputs().then((stored) => {
+      if (!mounted) return;
+      const tempC = parseAccommodationTemperature(stored.temperatureValue);
+      const smokePpm = parseAccommodationSmokeDensity(stored.smokeDensityValue);
+      setLocalFgsWord(computeFgsWordFromAccommodation(tempC, smokePpm));
+    });
+    return () => { mounted = false; };
+  }, []);
 
   // ── TO PLC: hydrate pressure drafts from storage ──
   useEffect(() => {

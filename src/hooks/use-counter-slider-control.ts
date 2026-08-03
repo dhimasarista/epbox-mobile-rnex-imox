@@ -158,9 +158,9 @@ export function useCounterSliderControl({
 
     const roundedValue = Math.round(numericValue);
     latestMetricValueRef.current = roundedValue;
-    setConfirmedValue(roundedValue);
 
     if (!pendingCommand) {
+      setConfirmedValue(roundedValue);
       setDraftValue(roundedValue);
       return;
     }
@@ -172,6 +172,7 @@ export function useCounterSliderControl({
         : metricsReceivedAt > pendingCommand.snapshot.baselineReceivedAt);
 
     if (isFreshGatewayResponse && pendingCommand.snapshot.expectedValue === roundedValue) {
+      setConfirmedValue(roundedValue);
       setDraftValue(roundedValue);
       resolveCommand(COMMAND_ID);
     }

@@ -70,11 +70,12 @@ export default function EngineRoom() {
         {activeTab === 'plc' ? (
           <PumpRoom contentOnly fixedTab="plc" />
         ) : (
-          <>
-            <PumpRoom contentOnly fixedTab="inject" simFgsConfirmed={simFgsConfirmed} />
-            <InjectValueRoom contentOnly onFgsWordChange={handleFgsWordChange} />
-          </>
+          <PumpRoom contentOnly fixedTab="inject" simFgsConfirmed={simFgsConfirmed} />
         )}
+        {/* Always mounted so simFgsConfirmed never resets on tab switch */}
+        <View style={activeTab === 'inject' ? undefined : { display: 'none' }}>
+          <InjectValueRoom contentOnly onFgsWordChange={handleFgsWordChange} />
+        </View>
         <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
