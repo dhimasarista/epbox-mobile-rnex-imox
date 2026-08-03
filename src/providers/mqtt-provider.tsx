@@ -512,8 +512,6 @@ export function MqttProvider({ children }: PropsWithChildren) {
           return;
         }
 
-        clientRef.current = null;
-
         setStatus((currentStatus) => (currentStatus === 'error' ? 'error' : 'disconnected'));
         setStatusMessage((currentMessage) =>
           currentMessage === 'MQTT connected.' ? 'MQTT disconnected.' : currentMessage
