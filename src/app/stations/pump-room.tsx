@@ -10,6 +10,11 @@ import {
   type PendingCommandState,
 } from '@/hooks/use-pending-command';
 import {
+  getStoredAccommodationRoomInputs,
+  parseAccommodationSmokeDensity,
+  parseAccommodationTemperature,
+} from '@/lib/accommodation-room-demo';
+import {
   getChannelBit,
   setChannelBit,
   unpackChannels,
@@ -19,15 +24,16 @@ import {
   buildCarloGavazziOtCommand,
   CARLO_GAVAZZI_GATEWAY_CONFIG,
   getCarloGavazziCounterNumericValue,
+  getToPlcW2FgsWord,
+  getToPlcW2RemoteActivation,
+  getToPlcW3ReservedStatus,
   packToPlcCommand,
   pressureBarToCounter,
+  setToPlcW2FgsWord,
+  setToPlcW2RemoteActivation,
+  TO_PLC_VALUE_SIGNAL_NAMES,
   unpackToPlcCommand,
 } from '@/lib/mqtt-topics';
-import {
-  getStoredAccommodationRoomInputs,
-  parseAccommodationSmokeDensity,
-  parseAccommodationTemperature,
-} from '@/lib/accommodation-room-demo';
 import {
   DEFAULT_PUMP_ROOM_PLC_INPUTS,
   getStoredPumpRoomPlcInputs,
@@ -143,7 +149,7 @@ const PRESSURE_LOW_BAR = 2;     // live-low
 const PRESSURE_WARNING_BAR = 8;  // 0–7 normal, 8–10 warning
 const PRESSURE_DANGER_BAR = 11;  // 11–16 danger
 
-// FGS W3 thresholds (mirrors inject-value.tsx / use-auto-fgs-confirmed.ts)
+// FGS threshold bits (mirrors inject-value.tsx / use-auto-fgs-confirmed.ts)
 const FGS_TEMP_ALERT_C = 82;
 const FGS_TEMP_WARNING_C = 40;
 const FGS_SMOKE_ALERT_PPM = 11;
@@ -177,11 +183,16 @@ function getPressureTone(bar: number): SignalTone {
 
 // Pack the current pressure drafts and PLC flags into the TO PLC uint64 (7193).
 function packInputs(inputs: PumpRoomPlcInputs, pumpActivation = 0, fgsConfirmed = 0) {
+  const w2Word = setToPlcW2FgsWord(
+    setToPlcW2RemoteActivation(0, pumpActivation >= 1 ? 1 : 0),
+    fgsConfirmed
+  );
+
   return packToPlcCommand({
     pressurePump1Counter: pressureBarToCounter(parsePressureBar(inputs.pressurePump1)),
     pressurePump2Counter: pressureBarToCounter(parsePressureBar(inputs.pressurePump2)),
-    pumpActivation,
-    fgsConfirmed,
+    pumpActivation: w2Word,
+    fgsConfirmed: getToPlcW3ReservedStatus(),
   });
 }
 
@@ -334,13 +345,18 @@ function ToPlcWordDisplay({
   fgsConfirmed: number;
   packed: number;
 }) {
-  const fgsBit0 = fgsConfirmed & 1;
-  const fgsBit1 = (fgsConfirmed >> 1) & 1;
-  const fgsBit2 = (fgsConfirmed >> 2) & 1;
+  const w2Word = setToPlcW2FgsWord(
+    setToPlcW2RemoteActivation(0, pumpActivation >= 1 ? 1 : 0),
+    fgsConfirmed
+  );
+  const w3Status = getToPlcW3ReservedStatus();
+  const w2Bit0 = w2Word & 1;
+  const w2Bit1 = (w2Word >> 1) & 1;
+  const w2Bit2 = (w2Word >> 2) & 1;
+  const w2Bit3 = (w2Word >> 3) & 1;
   const simpleWords = [
     { label: 'W0 · PT1', value: pt1Counter, active: pt1Counter > 0 },
     { label: 'W1 · PT2', value: pt2Counter, active: pt2Counter > 0 },
-    { label: 'W2 · Pump Act', value: pumpActivation, active: pumpActivation > 0 },
   ];
   return (
     <View style={s.toPlcBlock}>
@@ -355,20 +371,35 @@ function ToPlcWordDisplay({
             <Text style={s.wordLabel}>{w.label}</Text>
           </View>
         ))}
-        <View style={[s.wordCell, fgsConfirmed > 0 && s.wordCellActive]}>
-          <Text style={[s.wordValue, fgsConfirmed > 0 && s.wordValueActive]}>{fgsConfirmed}</Text>
-          <Text style={s.wordLabel}>W3 · FGS</Text>
+        <View style={[s.wordCell, w2Word > 0 && s.wordCellActive]}>
+          <Text style={[s.wordValue, w2Word > 0 && s.wordValueActive]}>{w2Word}</Text>
+          <Text style={s.wordLabel}>W2 · STATUS</Text>
           <View style={s.fgsBitRow}>
-            <View style={[s.fgsBit, fgsBit0 === 1 && s.fgsBitActive]}>
-              <Text style={[s.fgsBitText, fgsBit0 === 1 && s.fgsBitTextActive]}>0 · Temp High</Text>
+            <View style={[s.fgsBit, w2Bit0 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, w2Bit0 === 1 && s.fgsBitTextActive]}>
+                0 Remote Activation
+              </Text>
             </View>
-            <View style={[s.fgsBit, fgsBit1 === 1 && s.fgsBitActive]}>
-              <Text style={[s.fgsBitText, fgsBit1 === 1 && s.fgsBitTextActive]}>1 · Temp Warn</Text>
+            <View style={[s.fgsBit, w2Bit2 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, w2Bit2 === 1 && s.fgsBitTextActive]}>
+                1 Temp High
+              </Text>
             </View>
-            <View style={[s.fgsBit, fgsBit2 === 1 && s.fgsBitActive]}>
-              <Text style={[s.fgsBitText, fgsBit2 === 1 && s.fgsBitTextActive]}>2 · Smoke High</Text>
+            <View style={[s.fgsBit, w2Bit1 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, w2Bit1 === 1 && s.fgsBitTextActive]}>
+                2 Temp Warning
+              </Text>
+            </View>
+            <View style={[s.fgsBit, w2Bit3 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, w2Bit3 === 1 && s.fgsBitTextActive]}>
+                3 Smoke High
+              </Text>
             </View>
           </View>
+        </View>
+        <View style={[s.wordCell, w3Status > 0 && s.wordCellActive]}>
+          <Text style={[s.wordValue, w3Status > 0 && s.wordValueActive]}>{w3Status}</Text>
+          <Text style={s.wordLabel}>W3</Text>
         </View>
       </View>
     </View>
@@ -592,7 +623,7 @@ export default function PumpRoom({
   const [localFgsWord, setLocalFgsWord] = useState(0);
 
   // Engine Room passes a live Inject Value simulation word; keep showing it even
-  // while MQTT is connected so W3 bits react immediately as the operator drags.
+  // while MQTT is connected so W2 status bits react immediately as the operator drags.
   const effectiveFgsConfirmed =
     simFgsConfirmed ?? (isSimulation ? localFgsWord : fgsConfirmedValue);
 
@@ -736,7 +767,8 @@ export default function PumpRoom({
 
     const toPlcValue = getCarloGavazziCounterNumericValue(
       metricsTopic.payload,
-      CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.toPlc.deviceId
+      CARLO_GAVAZZI_GATEWAY_CONFIG.fireFightingRoom.toPlc.deviceId,
+      TO_PLC_VALUE_SIGNAL_NAMES
     );
 
     if (toPlcValue === null) {
@@ -746,9 +778,8 @@ export default function PumpRoom({
     const roundedToPlcValue = Math.round(toPlcValue);
     const gatewayInputs = getPumpRoomInputsFromToPlcValue(roundedToPlcValue);
     const gatewayWords = unpackToPlcCommand(roundedToPlcValue);
-    const gatewayRemoteActivationValue: 0 | 1 =
-      Math.round(gatewayWords.pumpActivation) >= 1 ? 1 : 0;
-    const gatewayFgsConfirmedValue = Math.round(gatewayWords.fgsConfirmed);
+    const gatewayRemoteActivationValue = getToPlcW2RemoteActivation(gatewayWords.pumpActivation);
+    const gatewayFgsConfirmedValue = getToPlcW2FgsWord(gatewayWords.pumpActivation);
     const ackedCommands = Object.values(pendingToPlcCommandMap).filter((command) => {
       const isFresh =
         command.snapshot.baselineReceivedAt === null
@@ -902,11 +933,16 @@ export default function PumpRoom({
         overrides.pressurePump2Bar ?? parsePressureBar(injectDraftRef.current.pressurePump2);
       const pressurePump1Counter = pressureBarToCounter(pressurePump1Bar);
       const pressurePump2Counter = pressureBarToCounter(pressurePump2Bar);
+      const remoteActivationBit: 0 | 1 =
+        (overrides.pumpActivation ?? remoteActivationValue) >= 1 ? 1 : 0;
       const packed = packToPlcCommand({
         pressurePump1Counter,
         pressurePump2Counter,
-        pumpActivation: overrides.pumpActivation ?? remoteActivationValue,
-        fgsConfirmed: fgsConfirmedValue,
+        pumpActivation: setToPlcW2FgsWord(
+          setToPlcW2RemoteActivation(0, remoteActivationBit),
+          fgsConfirmedValue
+        ),
+        fgsConfirmed: getToPlcW3ReservedStatus(),
       });
       const pendingCommand = startToPlcCommand({
         id: commandId,

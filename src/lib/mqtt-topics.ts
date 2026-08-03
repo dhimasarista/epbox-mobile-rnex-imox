@@ -224,11 +224,64 @@ export const CARLO_GAVAZZI_GATEWAY_CONFIG = {
 export const TO_PLC_WORD_INDEX = {
   pressurePump1: 0, // W[0] — PT1 set-point counter
   pressurePump2: 1, // W[1] — PT2 set-point counter
-  pumpActivation: 2, // W[2] — Pump Activation (1 = fire, else 0)
-  fgsConfirmed: 3, // W[3] — accommodation alarm confirmed fire (1 = ON, 0 = OFF)
+  pumpActivation: 2, // W[2] — packed control/status word
+  fgsConfirmed: 3, // W[3] — reserved
 } as const;
 
 export const TO_PLC_WORD_COUNT = 4;
+const TO_PLC_WORD_MASK = 0xffff;
+
+export const TO_PLC_W2_BIT = {
+  remoteActivation: 0,
+  limitA: 1,
+  limitB: 2,
+  limitC: 3,
+} as const;
+
+function normalizeToPlcWord(value: number) {
+  return Math.max(0, Math.round(value)) & TO_PLC_WORD_MASK;
+}
+
+function setToPlcWordBit(word: number, bitIndex: number, enabled: boolean) {
+  const normalizedWord = normalizeToPlcWord(word);
+  return enabled
+    ? normalizedWord | (1 << bitIndex)
+    : normalizedWord & ~(1 << bitIndex);
+}
+
+function getToPlcWordBit(word: number, bitIndex: number): 0 | 1 {
+  return ((normalizeToPlcWord(word) >> bitIndex) & 1) === 1 ? 1 : 0;
+}
+
+export function getToPlcW2RemoteActivation(w2Word: number): 0 | 1 {
+  return getToPlcWordBit(w2Word, TO_PLC_W2_BIT.remoteActivation);
+}
+
+export function setToPlcW2RemoteActivation(w2Word: number, enabled: 0 | 1) {
+  return setToPlcWordBit(w2Word, TO_PLC_W2_BIT.remoteActivation, enabled === 1);
+}
+
+export function getToPlcW2FgsWord(w2Word: number) {
+  const tempHighBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.limitB);
+  const tempWarnBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.limitA);
+  const smokeHighBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.limitC);
+  return (smokeHighBit << 2) | (tempWarnBit << 1) | tempHighBit;
+}
+
+export function setToPlcW2FgsWord(w2Word: number, fgsWord: number) {
+  const tempHighBit = (normalizeToPlcWord(fgsWord) & 1) === 1;
+  const tempWarnBit = ((normalizeToPlcWord(fgsWord) >> 1) & 1) === 1;
+  const smokeHighBit = ((normalizeToPlcWord(fgsWord) >> 2) & 1) === 1;
+  let nextWord = normalizeToPlcWord(w2Word);
+  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.limitA, tempWarnBit);
+  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.limitB, tempHighBit);
+  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.limitC, smokeHighBit);
+  return nextWord;
+}
+
+export function getToPlcW3ReservedStatus() {
+  return 0;
+}
 
 // Pack the two pressure counters, pump activation, and FGS confirmation into the
 // single uint64 value the TO PLC counter expects — the "by words" layer (see
@@ -277,6 +330,7 @@ export function getAccommodationAlarmFgsConfirmed(
 
 const VALUE_COMMANDS = ['Increase', 'Decrease', 'SetValue'] as const;
 const COUNTER_VALUE_SIGNAL_NAMES = ['Total value', 'Adjustable value', 'Input value'] as const;
+export const TO_PLC_VALUE_SIGNAL_NAMES = ['Adjustable value', 'Total value', 'Input value'] as const;
 
 export const ACCOMMODATION_ROOM_ALARM_STATUS_OPTIONS = [
   { code: 1 as const, label: 'Alarm OFF' },
