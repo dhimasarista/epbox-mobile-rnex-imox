@@ -15,8 +15,10 @@ import type { PublishTopicFn } from '@/providers/mqtt-provider';
 
 type MetricsPayload = Parameters<typeof getCarloGavazziCounterNumericValue>[0];
 
-// Limit bits are carried in W2. W3 stays reserved so the packed decimal remains
-// within the gateway numeric ceiling.
+// Limit bits are carried in W2:
+//   bit 1 = high warning temperature, bit 2 = high alarm temperature,
+//   bit 3 = smoke high.
+// W3 stays reserved so the packed decimal remains within the gateway numeric ceiling.
 const FGS_TEMPERATURE_WARNING_C = 40;
 const FGS_TEMPERATURE_ALERT_C = 82;
 const FGS_SMOKE_DENSITY_ALERT_PPM = 11;

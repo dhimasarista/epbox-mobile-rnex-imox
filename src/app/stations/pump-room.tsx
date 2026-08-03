@@ -380,13 +380,13 @@ function ToPlcWordDisplay({
                 0 Remote Activation
               </Text>
             </View>
-            <View style={[s.fgsBit, w2Bit2 === 1 && s.fgsBitActive]}>
-              <Text style={[s.fgsBitText, w2Bit2 === 1 && s.fgsBitTextActive]}>
+            <View style={[s.fgsBit, w2Bit1 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, w2Bit1 === 1 && s.fgsBitTextActive]}>
                 1 Temp High
               </Text>
             </View>
-            <View style={[s.fgsBit, w2Bit1 === 1 && s.fgsBitActive]}>
-              <Text style={[s.fgsBitText, w2Bit1 === 1 && s.fgsBitTextActive]}>
+            <View style={[s.fgsBit, w2Bit2 === 1 && s.fgsBitActive]}>
+              <Text style={[s.fgsBitText, w2Bit2 === 1 && s.fgsBitTextActive]}>
                 2 Temp Warning
               </Text>
             </View>

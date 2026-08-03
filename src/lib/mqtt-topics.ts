@@ -233,9 +233,9 @@ const TO_PLC_WORD_MASK = 0xffff;
 
 export const TO_PLC_W2_BIT = {
   remoteActivation: 0,
-  limitA: 1,
-  limitB: 2,
-  limitC: 3,
+  tempHighWarning: 1,
+  tempHighAlarm: 2,
+  smokeHigh: 3,
 } as const;
 
 function normalizeToPlcWord(value: number) {
@@ -262,9 +262,9 @@ export function setToPlcW2RemoteActivation(w2Word: number, enabled: 0 | 1) {
 }
 
 export function getToPlcW2FgsWord(w2Word: number) {
-  const tempHighBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.limitB);
-  const tempWarnBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.limitA);
-  const smokeHighBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.limitC);
+  const tempHighBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.tempHighAlarm);
+  const tempWarnBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.tempHighWarning);
+  const smokeHighBit = getToPlcWordBit(w2Word, TO_PLC_W2_BIT.smokeHigh);
   return (smokeHighBit << 2) | (tempWarnBit << 1) | tempHighBit;
 }
 
@@ -273,9 +273,9 @@ export function setToPlcW2FgsWord(w2Word: number, fgsWord: number) {
   const tempWarnBit = ((normalizeToPlcWord(fgsWord) >> 1) & 1) === 1;
   const smokeHighBit = ((normalizeToPlcWord(fgsWord) >> 2) & 1) === 1;
   let nextWord = normalizeToPlcWord(w2Word);
-  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.limitA, tempWarnBit);
-  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.limitB, tempHighBit);
-  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.limitC, smokeHighBit);
+  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.tempHighWarning, tempWarnBit);
+  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.tempHighAlarm, tempHighBit);
+  nextWord = setToPlcWordBit(nextWord, TO_PLC_W2_BIT.smokeHigh, smokeHighBit);
   return nextWord;
 }
 
